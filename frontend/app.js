@@ -16,6 +16,7 @@ const emptyState = document.querySelector("#emptyState");
 const imageStage = document.querySelector("#imageStage");
 const imageCaption = document.querySelector("#imageCaption");
 const resultPanel = document.querySelector("#resultPanel");
+const planogramSelect = document.querySelector('#planogramSelect');
 
 let selectedFile = null;
 let previewUrl = null;
@@ -100,8 +101,14 @@ function renderGaps(gaps) {
     const row = document.createElement("div");
     row.className = "detection-row";
     const product = gap.product_class || "ไม่สามารถระบุสินค้าได้";
-    const certainty = gap.association_certainty === "high" ? "มั่นใจสูง" : gap.association_certainty === "medium" ? "คาดการณ์" : "หลักฐานไม่พอ";
-    row.innerHTML = `<span>Gap ${gap.gap_number}<small>${certainty}</small></span><strong>${product}</strong>`;
+    const labels = { planogram: `ตามแผน: ${gap.shelf_name}`, 'no-planogram': 'ไม่ได้เลือกแผน', 'ambiguous-region': 'ทับซ้อนหลายพื้นที่', 'outside-planogram': 'ระบุพื้นที่ไม่ได้' };
+    const title = document.createElement('span');
+    title.textContent = `Gap ${gap.gap_number}`;
+    const detail = document.createElement('small');
+    detail.textContent = labels[gap.association_method] || 'ระบุพื้นที่ไม่ได้';
+    const name = document.createElement('strong');
+    name.textContent = product;
+    title.append(detail); row.append(title, name);
     list.append(row);
   });
 }
@@ -172,6 +179,7 @@ form.addEventListener("submit", async (event) => {
         "X-File-Extension": extension,
         "X-Product-Confidence": productConfidence.value,
         "X-Gap-Confidence": gapConfidence.value,
+        "X-Planogram-Id": planogramSelect.value,
       },
       body: selectedFile,
     });
@@ -189,3 +197,14 @@ form.addEventListener("submit", async (event) => {
 });
 
 checkService();
+
+fetch(`${API_BASE}/planogram.php`).then(async response => {
+  const payload = await readJsonResponse(response);
+  if (!response.ok || !payload.success) throw new Error(payload.message);
+  if (payload.data) {
+    const option = document.createElement('option');
+    option.value = payload.data.id; option.textContent = payload.data.name;
+    planogramSelect.append(option);
+    document.querySelector('#planogramStatus').textContent = 'เลือกแผนที่ตรงกับชั้นวางและมุมกล้องของภาพ';
+  } else document.querySelector('#planogramStatus').textContent = 'ยังไม่มีแผน กรุณาบันทึกในหน้ากำหนด Planogram';
+}).catch(() => { document.querySelector('#planogramStatus').textContent = 'โหลดแผนไม่ได้ ตรวจสอบ AI service แล้วโหลดหน้าใหม่'; });

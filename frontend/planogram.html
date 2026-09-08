@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shelf Vision — Planogram</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="planogram.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div><p class="eyebrow">SHELF VISION</p><h1>กำหนด Planogram</h1></div>
+      <a href="index.html">กลับหน้าตรวจจับ</a>
+    </header>
+    <section class="workspace">
+      <section class="control-panel">
+        <h2>แผนผังชั้นวาง</h2>
+        <label class="field">ชื่อแผน<input id="planName" maxlength="100" value="ชั้นวาง 2 ชั้น"></label>
+        <label class="field">ภาพอ้างอิง<input id="referenceInput" type="file" accept="image/jpeg,image/png,image/webp"></label>
+        <p class="hint">ภาพไม่เกิน 10 MB • เปลี่ยนภาพแล้วต้องวาดพื้นที่ใหม่</p>
+        <div id="shelfList"></div>
+        <datalist id="productClasses"></datalist>
+        <p id="classStatus" class="hint" role="status">กำลังโหลดรายชื่อสินค้าจากโมเดล…</p>
+        <button id="addShelf" type="button">＋ เพิ่มพื้นที่ชั้น</button>
+        <button id="savePlan" class="primary-button" type="button">บันทึกแผน</button>
+        <p class="hint">บันทึกแผนลงฐานข้อมูล แล้วเลือกใช้ในหน้าตรวจจับ ภาพตรวจต้องใช้มุมกล้องเดียวกับภาพอ้างอิง ทุกครั้งที่บันทึกจะเก็บเป็นเวอร์ชันใหม่</p>
+        <p id="message" role="status" aria-live="polite"></p>
+      </section>
+      <section class="visual-panel">
+        <h2>กำหนดพื้นที่บนภาพ</h2>
+        <p id="drawHint" class="hint">เลือกภาพ แล้วกด “วาดพื้นที่” ของชั้นที่ต้องการ</p>
+        <div class="draw-actions"><button id="undoPoint" type="button" disabled>ย้อนจุดล่าสุด</button><button id="cancelDraw" type="button" disabled>ยกเลิกการวาด</button></div>
+        <div id="referenceStage">
+          <p id="noImage">ยังไม่มีภาพอ้างอิง</p>
+          <svg id="editor" xmlns="http://www.w3.org/2000/svg" hidden aria-label="คลิกมุมทั้งสี่ของพื้นที่ชั้นตามลำดับรอบกรอบ">
+            <image id="referenceImage" width="1000" height="1000" preserveAspectRatio="none"></image>
+            <g id="regions"></g>
+          </svg>
+        </div>
+      </section>
+    </section>
+  </main>
+  <script src="planogram.js"></script>
+</body>
+</html>

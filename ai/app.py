@@ -1,4 +1,7 @@
 import uuid
+import json
+import hashlib
+from functools import lru_cache
 from pathlib import Path
 
 import cv2
@@ -16,11 +19,22 @@ from config import (
     UPLOAD_DIR,
 )
 from model_service import ModelServiceError, ShelfModelService
+from planogram import validate_plan, validate_inference_plan
 
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE
 model_service = ShelfModelService(PRODUCT_MODEL_PATH, GAP_MODEL_PATH)
+
+@lru_cache(maxsize=4)
+def model_hash(path, modified, size):
+    with open(path, 'rb') as file:
+        return hashlib.file_digest(file, 'sha256').hexdigest()
+
+
+def model_version(path):
+    stat = path.stat()
+    return model_hash(str(path), stat.st_mtime_ns, stat.st_size)
 
 # สร้างพื้นที่จัดเก็บเมื่อ service เริ่มทำงาน เพื่อให้ PHP ใช้เป็น upload temp ได้
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -84,6 +98,14 @@ def predict():
         return error_response("กรุณาเลือกไฟล์ภาพ", 400)
 
     try:
+        plan_id = request.form.get('planogram_id', '').strip()
+        plan = json.loads(request.form.get('planogram', 'null'))
+        if plan is not None:
+            plan = validate_inference_plan(plan, model_service.class_names())
+        if plan_id and (plan is None or plan['id'] != plan_id):
+            return error_response('แผนถูกเปลี่ยนหรือไม่พบ กรุณาโหลดหน้าใหม่และเลือกแผนอีกครั้ง', 409)
+        if plan is not None and not plan_id:
+            return error_response('กรุณาระบุรหัส Planogram', 400)
         product_confidence = parse_confidence(
             request.form.get(
                 "product_confidence", DEFAULT_PRODUCT_CONFIDENCE
@@ -118,6 +140,7 @@ def predict():
             result_path,
             product_confidence,
             gap_confidence,
+            plan,
         )
     except ValueError as exc:
         return error_response(str(exc), 400)
@@ -130,6 +153,10 @@ def predict():
             "product_confidence": product_confidence,
             "gap_confidence": gap_confidence,
             **detection_result,
+            "input_image_path": f"storage/uploads/{upload_path.name}",
+            "result_image_path": f"storage/results/{result_filename}",
+            "product_model": model_version(PRODUCT_MODEL_PATH),
+            "gap_model": model_version(GAP_MODEL_PATH),
             "result_image_url": f"{request.host_url.rstrip('/')}/results/{result_filename}",
         }
     )
@@ -138,6 +165,17 @@ def predict():
 @app.get("/results/<path:filename>")
 def result_image(filename):
     return send_from_directory(RESULT_DIR, filename)
+
+
+@app.post('/planogram/validate')
+def planogram():
+    try:
+        plan = validate_plan(request.get_json(silent=True), model_service.class_names())
+        return jsonify(success=True, data=plan)
+    except ValueError as exc:
+        return error_response(str(exc), 400)
+    except (OSError, ModelServiceError) as exc:
+        return error_response(str(exc), 503)
 
 
 @app.errorhandler(RequestEntityTooLarge)

@@ -1,0 +1,21 @@
+.topbar a { margin-left: auto; color: var(--cyan); }
+.field { display: grid; gap: 8px; margin: 16px 0; }
+input { width: 100%; min-width: 0; padding: 9px; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; }
+button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--surface-2); cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+.hint { color: var(--muted); font-size: .85rem; margin: 12px 0; line-height: 1.6; }
+.shelf-card { margin: 16px 0; padding: 12px; border: 1px solid var(--line); border-left: 4px solid var(--cyan); border-radius: 10px; }
+.shelf-card.active { border-color: var(--lime); }
+.shelf-card label { display: grid; gap: 5px; margin-bottom: 10px; font-size: .9rem; }
+.shelf-card button { margin-right: 8px; }
+.draw-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+#savePlan { margin: 18px 0 0; }
+#referenceStage { background: #061018; border-radius: 10px; overflow: hidden; }
+#noImage { padding: 80px 20px; text-align: center; color: var(--muted); }
+#editor { display: block; width: 100%; height: auto; touch-action: manipulation; }
+#editor[hidden] { display: none; }
+#editor.drawing { cursor: crosshair; }
+#message { margin-top: 12px; color: var(--lime); }
+#message.error { color: var(--red); }
+@media (max-width: 900px) { .workspace { grid-template-columns: 1fr; } .topbar { flex-wrap: wrap; } }

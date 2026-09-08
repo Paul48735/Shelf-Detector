@@ -15,6 +15,7 @@
         <p class="eyebrow">SHELF VISION</p>
         <h1>ตรวจจับสินค้าและช่องว่าง</h1>
       </div>
+      <a href="planogram.html" style="color: var(--cyan)">กำหนด Planogram</a>
       <div id="serviceStatus" class="service-status" role="status">
         <span class="status-dot"></span>
         <span>กำลังเชื่อมต่อโมเดล</span>
@@ -31,6 +32,11 @@
           </div>
         </div>
 
+        <label class="field">
+          <span>Planogram สำหรับระบุสินค้าในช่องว่าง</span>
+          <select id="planogramSelect"><option value="">ไม่ใช้แผน — ไม่ระบุ class ของ gap</option></select>
+        </label>
+        <p id="planogramStatus">กำลังโหลดแผนจากหลังบ้าน…</p>
         <label class="field">
           <span>Product confidence <output id="productConfidenceValue">0.50</output></span>
           <input id="productConfidence" type="range" min="0.10" max="0.95" step="0.05" value="0.50">
@@ -112,4 +118,3 @@
   <script src="app.js"></script>
 </body>
 </html>
-

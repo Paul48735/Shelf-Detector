@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../config/inference.php';
+require_once __DIR__ . '/../config/repository.php';
 
 handleInferenceCors();
 
@@ -9,6 +10,10 @@ if (!in_array(($_SERVER['REQUEST_METHOD'] ?? 'GET'), ['POST', 'PUT'], true)) {
 }
 
 try {
+    $db = getDB();
+    $planId = trim((string) ($_SERVER['HTTP_X_PLANOGRAM_ID'] ?? ''));
+    $plan = $planId === '' ? null : loadPlan($db, $planId, false);
+    if ($planId !== '' && !$plan) inferenceJsonResponse(['success' => false, 'message' => 'ไม่พบ Planogram'], 404);
     // รับ binary image โดยตรง เพื่อไม่สร้างไฟล์ชั่วคราวซ้ำใน PHP
     $imageBytes = @file_get_contents('php://input');
     if ($imageBytes === false || $imageBytes === '') {
@@ -64,16 +69,18 @@ try {
         ),
         'product_confidence' => (string) $productConfidence,
         'gap_confidence' => (string) $gapConfidence,
+        'planogram_id' => $planId,
+        'planogram' => json_encode($plan, JSON_THROW_ON_ERROR),
     ];
 
     [$statusCode, $response] = callAiService(
         AI_SERVICE_URL . '/predict',
         [CURLOPT_POST => true, CURLOPT_POSTFIELDS => $postFields]
     );
+    if ($statusCode === 200 && !empty($response['success'])) {
+        $response['detection_run_id'] = saveDetection($db, $response, $planId ?: null);
+    }
     inferenceJsonResponse($response, $statusCode ?: 502);
 } catch (Throwable $error) {
-    inferenceJsonResponse([
-        'success' => false,
-        'message' => $error->getMessage(),
-    ], 502);
+    databaseApiError($error);
 }

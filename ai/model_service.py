@@ -3,6 +3,7 @@ from pathlib import Path
 
 import cv2
 from ultralytics import YOLO
+from planogram import match_gap
 
 
 class ModelServiceError(RuntimeError):
@@ -10,7 +11,7 @@ class ModelServiceError(RuntimeError):
 
 
 class ShelfModelService:
-    """ตรวจสินค้าทุกคลาส ตรวจ gap และจับคู่จากตำแหน่งในแถวเดียวกัน."""
+    """ตรวจสินค้าและจับคู่ gap กับพื้นที่ Planogram เท่านั้น."""
 
     def __init__(self, product_model_path: Path, gap_model_path: Path):
         self.product_model_path = Path(product_model_path)
@@ -68,78 +69,6 @@ class ShelfModelService:
         return detections
 
     @staticmethod
-    def _center(box):
-        x1, y1, x2, y2 = box
-        return (x1 + x2) / 2, (y1 + y2) / 2
-
-    @staticmethod
-    def _vertical_overlap_ratio(first_box, second_box) -> float:
-        _, ay1, _, ay2 = first_box
-        _, by1, _, by2 = second_box
-        overlap = max(0.0, min(ay2, by2) - max(ay1, by1))
-        smaller_height = max(1.0, min(ay2 - ay1, by2 - by1))
-        return overlap / smaller_height
-
-    def _associate_gap(self, gap: dict, products: list[dict], frame_width: int):
-        """หาแบรนด์ซ้าย/ขวาที่อยู่แถวเดียวกับ gap โดยไม่ใช้ ROI."""
-        gx1, _, gx2, _ = gap["box"]
-        gap_center_x, gap_center_y = self._center(gap["box"])
-        max_distance = frame_width * 0.35
-        left_candidates = []
-        right_candidates = []
-
-        for product in products:
-            px1, _, px2, _ = product["box"]
-            product_center_x, product_center_y = self._center(product["box"])
-            vertical_overlap = self._vertical_overlap_ratio(
-                gap["box"], product["box"]
-            )
-            average_height = max(
-                1.0,
-                (
-                    (gap["box"][3] - gap["box"][1])
-                    + (product["box"][3] - product["box"][1])
-                ) / 2,
-            )
-            same_row = (
-                vertical_overlap >= 0.25
-                or abs(gap_center_y - product_center_y) <= average_height * 0.45
-            )
-            if not same_row:
-                continue
-
-            if product_center_x < gap_center_x:
-                distance = max(0.0, gx1 - px2)
-                if distance <= max_distance:
-                    left_candidates.append((distance, product))
-            else:
-                distance = max(0.0, px1 - gx2)
-                if distance <= max_distance:
-                    right_candidates.append((distance, product))
-
-        nearest_left = min(left_candidates, default=None, key=lambda item: item[0])
-        nearest_right = min(right_candidates, default=None, key=lambda item: item[0])
-
-        if nearest_left and nearest_right:
-            left_distance, left_product = nearest_left
-            right_distance, right_product = nearest_right
-            if left_product["class_name"] == right_product["class_name"]:
-                return left_product["class_name"], "both-sides", "high"
-
-            closer, other = sorted(
-                [nearest_left, nearest_right], key=lambda item: item[0]
-            )
-            # เมื่อสองฝั่งเป็นคนละสินค้า ต้องมีฝั่งหนึ่งใกล้กว่าชัดเจน
-            if closer[0] + frame_width * 0.025 < other[0] * 0.65:
-                return closer[1]["class_name"], "nearest-side", "medium"
-            return None, "conflicting-neighbors", "low"
-
-        nearest = nearest_left or nearest_right
-        if nearest:
-            return nearest[1]["class_name"], "one-side", "medium"
-        return None, "no-neighbor", "low"
-
-    @staticmethod
     def _draw_box(image, detection, color, label):
         x1, y1, x2, y2 = map(int, detection["box"])
         cv2.rectangle(image, (x1, y1), (x2, y2), color, 3)
@@ -171,12 +100,16 @@ class ShelfModelService:
         result_path: Path,
         product_confidence: float,
         gap_confidence: float,
+        plan=None,
     ) -> dict:
         product_model, gap_model = self._models()
         gap_class_id = self._class_id(gap_model, "gap")
         image = cv2.imread(str(image_path))
         if image is None:
             raise ValueError("ไม่สามารถอ่านไฟล์ภาพที่อัปโหลดได้")
+
+        if plan and abs((image.shape[1] / image.shape[0]) / plan['ratio'] - 1) > .02:
+            raise ValueError('สัดส่วนภาพไม่ตรงกับ Planogram กรุณาใช้ภาพจากมุมกล้องเดิม')
 
         try:
             product_result = product_model.predict(
@@ -210,15 +143,12 @@ class ShelfModelService:
 
         gaps = []
         for index, gap in enumerate(raw_gaps, start=1):
-            product_name, method, certainty = self._associate_gap(
-                gap, products, image.shape[1]
-            )
+            association = match_gap(gap["box"], plan, image.shape[1], image.shape[0])
+            product_name = association["product_class"]
             gap_data = {
                 "gap_number": index,
-                "product_class": product_name,
+                **association,
                 "confidence": round(gap["confidence"], 4),
-                "association_method": method,
-                "association_certainty": certainty,
                 "box": [round(value, 2) for value in gap["box"]],
             }
             gaps.append(gap_data)
@@ -233,6 +163,9 @@ class ShelfModelService:
             raise ModelServiceError("ไม่สามารถบันทึกภาพผลลัพธ์ได้")
 
         return {
+            "planogram_id": plan["id"] if plan else None,
+            "image_width": image.shape[1],
+            "image_height": image.shape[0],
             "products": [
                 {
                     **item,
