@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="ระบบตรวจจับสินค้าและช่องว่างจากภาพชั้นวาง">
+  <title>Shelf Vision — ตรวจสอบสินค้า</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+      <div>
+        <p class="eyebrow">SHELF VISION</p>
+        <h1>ตรวจจับสินค้าและช่องว่าง</h1>
+      </div>
+      <div id="serviceStatus" class="service-status" role="status">
+        <span class="status-dot"></span>
+        <span>กำลังเชื่อมต่อโมเดล</span>
+      </div>
+    </header>
+
+    <section class="workspace">
+      <form id="detectionForm" class="control-panel" novalidate>
+        <div class="panel-heading">
+          <span class="step-number">01</span>
+          <div>
+            <h2>อัปโหลดภาพชั้นวาง</h2>
+            <p>ระบบจะตรวจสินค้าทุกชนิดและวิเคราะห์ gap อัตโนมัติ</p>
+          </div>
+        </div>
+
+        <label class="field">
+          <span>Product confidence <output id="productConfidenceValue">0.50</output></span>
+          <input id="productConfidence" type="range" min="0.10" max="0.95" step="0.05" value="0.50">
+        </label>
+
+        <label class="field">
+          <span>Gap confidence <output id="gapConfidenceValue">0.50</output></span>
+          <input id="gapConfidence" type="range" min="0.10" max="0.95" step="0.05" value="0.50">
+        </label>
+
+        <div class="upload-section">
+          <span class="field-label">ภาพสำหรับตรวจสอบ</span>
+          <label id="dropZone" class="drop-zone" for="imageInput">
+            <input id="imageInput" type="file" accept="image/jpeg,image/png,image/webp" required>
+            <span class="upload-icon" aria-hidden="true">＋</span>
+            <strong>เลือกภาพ หรือลากไฟล์มาวาง</strong>
+            <span>JPG, PNG หรือ WEBP — ไม่เกิน 10 MB</span>
+          </label>
+          <div id="fileInfo" class="file-info" hidden>
+            <span id="fileName"></span>
+            <button id="removeFile" type="button">นำออก</button>
+          </div>
+        </div>
+
+        <div id="formError" class="message error-message" role="alert" hidden></div>
+        <button id="submitButton" class="primary-button" type="submit" disabled>
+          <span class="button-label">ตรวจสอบภาพ</span>
+          <span class="button-loading" hidden>กำลังประมวลผล 2 โมเดล...</span>
+        </button>
+      </form>
+
+      <section class="visual-panel" aria-live="polite">
+        <div class="panel-heading compact">
+          <span class="step-number">02</span>
+          <div>
+            <h2>ภาพวิเคราะห์</h2>
+            <p id="imageCaption">อัปโหลดภาพเพื่อเริ่มตรวจสอบ</p>
+          </div>
+        </div>
+        <div id="imageStage" class="image-stage empty">
+          <div id="emptyState" class="empty-state">
+            <div class="scan-frame" aria-hidden="true"></div>
+            <strong>ยังไม่มีภาพ</strong>
+            <span>กรอบสินค้าและ gap จะแสดงในพื้นที่นี้</span>
+          </div>
+          <img id="previewImage" alt="ภาพสำหรับตรวจสอบ" hidden>
+        </div>
+      </section>
+    </section>
+
+    <section id="resultPanel" class="result-panel" hidden aria-live="polite">
+      <div class="result-title">
+        <span class="step-number">03</span>
+        <div>
+          <p class="eyebrow">DETECTION RESULT</p>
+          <h2>ผลการวิเคราะห์ภาพ</h2>
+        </div>
+      </div>
+
+      <div class="metric-grid">
+        <article class="metric-card accent"><span>สินค้าทั้งหมด</span><strong id="totalProducts">0</strong><small>ชิ้น</small></article>
+        <article class="metric-card"><span>ชนิดสินค้าที่พบ</span><strong id="totalClasses">0</strong><small>คลาส</small></article>
+        <article class="metric-card warning"><span>Gap ทั้งหมด</span><strong id="totalGaps">0</strong><small>ตำแหน่ง</small></article>
+        <article class="metric-card"><span>Gap ที่ระบุสินค้าได้</span><strong id="identifiedGaps">0</strong><small>ตำแหน่ง</small></article>
+      </div>
+
+      <div class="detail-grid">
+        <section class="detail-card">
+          <h3>สินค้าที่ตรวจพบ</h3>
+          <div id="productList" class="detection-list"></div>
+        </section>
+        <section class="detail-card">
+          <h3>การวิเคราะห์ช่องว่าง</h3>
+          <div id="gapList" class="detection-list"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
+

@@ -1,0 +1,6 @@
+storage/uploads/*
+storage/results/*
+__pycache__/
+*.pyc
+venv/
+runs/detect/
