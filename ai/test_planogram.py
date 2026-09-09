@@ -76,7 +76,19 @@ class PlanogramTests(unittest.TestCase):
                     payload = service.detect_scene(source, result, .5, .5, plan)
                     self.assertEqual(payload['gaps'][0]['product_class'], expected)
                     self.assertEqual(payload['identified_gaps'], int(expected is not None))
+                    self.assertEqual(payload['products'][0]['placement_status'], 'wrong-shelf' if plan else 'unmatched')
+                    self.assertEqual(payload['wrong_shelf_count'], int(plan is not None))
                     self.assertIsNotNone(cv2.imread(str(result)))
+            for class_name, box, expected_status in [
+                ('product-a', (10, 10, 30, 30), 'correct'),
+                ('product-b', (10, 10, 30, 30), 'wrong-shelf'),
+                ('product-a', (10, 40, 30, 60), 'unmatched'),
+            ]:
+                item = dict(product, class_name=class_name, box=box)
+                with patch.object(service, '_models', return_value=(model, model)), patch.object(service, '_collect', side_effect=[[item], []]):
+                    payload = service.detect_scene(source, result, .5, .5, self.plan)
+                    self.assertEqual(payload['products'][0]['placement_status'], expected_status)
+                    self.assertEqual(payload['total_gaps'], 0)
             wrong_ratio = dict(self.plan, ratio=2)
             with patch.object(service, '_models', return_value=(model, model)), self.assertRaises(ValueError):
                 service.detect_scene(source, result, .5, .5, wrong_ratio)

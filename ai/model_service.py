@@ -4,6 +4,8 @@ from pathlib import Path
 import cv2
 from ultralytics import YOLO
 from planogram import match_gap
+from PIL import Image, ImageDraw, ImageFont
+import numpy as np
 
 
 class ModelServiceError(RuntimeError):
@@ -71,26 +73,53 @@ class ShelfModelService:
     @staticmethod
     def _draw_box(image, detection, color, label):
         x1, y1, x2, y2 = map(int, detection["box"])
-        cv2.rectangle(image, (x1, y1), (x2, y2), color, 3)
+        scale = max(1.0, image.shape[1] / 1400)
+        padding = round(14 * scale)
+        x1, y1 = max(0, x1 - padding), max(0, y1 - padding)
+        x2, y2 = min(image.shape[1] - 1, x2 + padding), min(image.shape[0] - 1, y2 + padding)
+        cv2.rectangle(image, (x1, y1), (x2, y2), color, max(4, round(5 * scale)))
+        if 'ผิด shelf' in label:
+            font_path = Path('C:/Windows/Fonts/tahoma.ttf')
+            if font_path.is_file():
+                canvas = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+                painter = ImageDraw.Draw(canvas)
+                font = ImageFont.truetype(str(font_path), round(24 * scale))
+                lines = label.split(' | ')
+                line_bboxes = [painter.textbbox((0, 0), line, font=font) for line in lines]
+                line_heights = [max(1, bbox[3] - bbox[1]) for bbox in line_bboxes]
+                line_widths = [bbox[2] - bbox[0] for bbox in line_bboxes]
+                total_height = sum(line_heights) + 4 * (len(lines) - 1)
+                top = max(0, min(y1 - total_height, image.shape[0] - total_height))
+                width = min(image.shape[1], max(line_widths) + 8)
+                left = max(0, min(x1, image.shape[1] - width))
+                painter.rectangle((left, top, left + width, top + total_height), fill=tuple(reversed(color)))
+                y = top
+                for i, line in enumerate(lines):
+                    painter.text((left + 4, y), line, font=font, fill='white')
+                    y += line_heights[i] + 4
+                image[:] = cv2.cvtColor(np.asarray(canvas), cv2.COLOR_RGB2BGR)
+                return
+            label = label.replace('ผิด shelf', 'WRONG SHELF')
         (text_width, text_height), _ = cv2.getTextSize(
-            label, cv2.FONT_HERSHEY_SIMPLEX, 0.62, 2
+            label, cv2.FONT_HERSHEY_SIMPLEX, 0.9 * scale, max(2, round(1.5 * scale))
         )
-        label_top = max(0, y1 - text_height - 12)
+        label_top = max(0, y1 - text_height - 10)
+        label_left = max(0, min(x1, image.shape[1] - text_width - 8))
         cv2.rectangle(
             image,
-            (x1, label_top),
-            (x1 + text_width + 12, y1),
+            (label_left, label_top),
+            (label_left + text_width + 8, label_top + text_height + 10),
             color,
             -1,
         )
         cv2.putText(
             image,
             label,
-            (x1 + 6, max(text_height + 2, y1 - 7)),
+            (label_left + 4, label_top + text_height + 3),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.62,
-            (7, 18, 26),
-            2,
+            0.9 * scale,
+            (255, 255, 255),
+            max(2, round(1.5 * scale)),
             cv2.LINE_AA,
         )
 
@@ -134,11 +163,24 @@ class ShelfModelService:
 
         annotated = image.copy()
         for product in products:
+            association = match_gap(product['box'], plan, image.shape[1], image.shape[0])
+            expected = association['product_class']
+            status = 'unmatched' if expected is None else ('correct' if product['class_name'] == expected else 'wrong-shelf')
+            product.update(expected_class=expected, region_id=association['shelf_id'],
+                           shelf_name=association['shelf_name'], placement_status=status,
+                           association_method=association['association_method'],
+                           overlap_ratio=association.get('overlap_ratio'))
+            color = (41, 211, 163) if status == 'correct' else (0, 0, 230) if status == 'wrong-shelf' else (0, 190, 255)
+            label = f"{product['class_name']} {product['confidence']:.2f}"
+            if status == 'wrong-shelf':
+                label = f"ผิด shelf | Found: {product['class_name']} | Expected: {expected}"
+            elif status == 'unmatched':
+                label += ' [UNMATCHED]'
             self._draw_box(
                 annotated,
                 product,
-                (41, 211, 163),
-                f"{product['class_name']} {product['confidence']:.2f}",
+                color,
+                label,
             )
 
         gaps = []
@@ -176,6 +218,7 @@ class ShelfModelService:
             ],
             "product_counts": product_counts,
             "total_products": len(products),
+            "wrong_shelf_count": sum(p['placement_status'] == 'wrong-shelf' for p in products),
             "gaps": gaps,
             "total_gaps": len(gaps),
             "identified_gaps": sum(

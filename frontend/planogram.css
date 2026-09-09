@@ -11,7 +11,7 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
 .shelf-card button { margin-right: 8px; }
 .draw-actions { display: flex; gap: 8px; margin-bottom: 12px; }
 #savePlan { margin: 18px 0 0; }
-#referenceStage { background: #061018; border-radius: 10px; overflow: hidden; }
+#referenceStage { background: var(--surface-2); border-radius: 10px; overflow: hidden; }
 #noImage { padding: 80px 20px; text-align: center; color: var(--muted); }
 #editor { display: block; width: 100%; height: auto; touch-action: manipulation; }
 #editor[hidden] { display: none; }
@@ -19,3 +19,7 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
 #message { margin-top: 12px; color: var(--lime); }
 #message.error { color: var(--red); }
 @media (max-width: 900px) { .workspace { grid-template-columns: 1fr; } .topbar { flex-wrap: wrap; } }
+
+button { border-radius: 12px; min-height: 42px; }
+#savePlan { background: #0071e3; color: white; border: 0; border-radius: 999px; }
+.shelf-card { background: #fafafa; border-radius: 16px; }

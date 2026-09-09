@@ -27,12 +27,15 @@ try {
     $result = ['input_image_path'=>'storage/uploads/test.jpg','result_image_path'=>'storage/results/test.jpg',
         'image_width'=>100,'image_height'=>100,'product_confidence'=>.5,'gap_confidence'=>.5,
         'product_model'=>'test','gap_model'=>'test',
-        'products'=>[['class_name'=>'test-a','confidence'=>.9,'box'=>[1,1,10,10]]],
+        'products'=>[['class_name'=>'test-b','confidence'=>.9,'box'=>[1,1,10,10],
+            'region_id'=>'upper','expected_class'=>'test-a','placement_status'=>'wrong-shelf',
+            'association_method'=>'planogram','overlap_ratio'=>1]],
         'gaps'=>[['gap_number'=>1,'shelf_id'=>'upper','product_class'=>'test-a','confidence'=>.8,
             'association_method'=>'planogram','overlap_ratio'=>1,'box'=>[20,20,40,40]]]];
     $run = saveDetection($db, $result, $id);
     verify((int)$db->query('SELECT COUNT(*) FROM detected_gaps')->fetchColumn() === 1, 'Gap saved');
     verify((int)$db->query('SELECT COUNT(*) FROM detected_products')->fetchColumn() === 1, 'Product saved');
+    verify($db->query('SELECT placement_status FROM detected_products LIMIT 1')->fetchColumn() === 'wrong-shelf', 'Wrong shelf saved');
     $bad = $result; $bad['gaps'][] = $bad['gaps'][0];
     try { saveDetection($db, $bad, $id); throw new RuntimeException('Expected duplicate gap failure'); }
     catch (PDOException $expected) {}
@@ -40,6 +43,9 @@ try {
     verify((int)$db->query('SELECT COUNT(*) FROM detected_products')->fetchColumn() === 1, 'Failed products rolled back');
     $result['gaps'][0]['shelf_id'] = null; $result['gaps'][0]['product_class'] = null;
     $result['gaps'][0]['association_method'] = 'no-planogram'; unset($result['gaps'][0]['overlap_ratio']);
+    $result['products'][0] = ['class_name'=>'test-b','confidence'=>.9,'box'=>[1,1,10,10],
+        'region_id'=>null,'expected_class'=>null,'placement_status'=>'unmatched',
+        'association_method'=>'no-planogram','overlap_ratio'=>null];
     saveDetection($db, $result, null);
     verify((int)$db->query('SELECT COUNT(*) FROM detected_gaps WHERE product_class IS NULL')->fetchColumn() === 1, 'Unknown gap saved');
     echo "PASS: plan round trip, detection save, unknown gap, transaction rollback\n";

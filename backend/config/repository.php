@@ -73,9 +73,11 @@ function saveDetection(PDO $db, array $result, ?string $planId): int
         $stmt = $db->prepare('INSERT INTO detection_runs (planogram_id,input_image_path,result_image_path,image_width,image_height,product_confidence,gap_confidence,product_model,gap_model) VALUES (?,?,?,?,?,?,?,?,?)');
         $stmt->execute([$planId, $result['input_image_path'], $result['result_image_path'], $result['image_width'], $result['image_height'], $result['product_confidence'], $result['gap_confidence'], $result['product_model'], $result['gap_model']]);
         $id = (int)$db->lastInsertId();
-        $stmt = $db->prepare('INSERT INTO detected_products (detection_run_id,product_id,class_name,confidence,x1,y1,x2,y2) VALUES (?,?,?,?,?,?,?,?)');
+        $stmt = $db->prepare('INSERT INTO detected_products (detection_run_id,product_id,class_name,confidence,x1,y1,x2,y2,planogram_id,region_id,expected_class,placement_status,association_method,overlap_ratio) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
         foreach ($result['products'] as $item) {
-            $stmt->execute(array_merge([$id, catalogId($db, $item['class_name']), $item['class_name'], $item['confidence']], $item['box']));
+            $stmt->execute(array_merge([$id, catalogId($db, $item['class_name']), $item['class_name'], $item['confidence']], $item['box'],
+                [$planId, $item['region_id'] ?? null, $item['expected_class'] ?? null,
+                 $item['placement_status'] ?? 'unchecked', $item['association_method'] ?? null, $item['overlap_ratio'] ?? null]));
         }
         $stmt = $db->prepare('INSERT INTO detected_gaps (detection_run_id,gap_number,planogram_id,region_id,product_class,confidence,association_method,overlap_ratio,x1,y1,x2,y2) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
         foreach ($result['gaps'] as $item) {

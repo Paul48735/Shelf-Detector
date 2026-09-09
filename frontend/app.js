@@ -119,10 +119,19 @@ function showResult(payload) {
   document.querySelector("#totalGaps").textContent = payload.total_gaps;
   document.querySelector("#identifiedGaps").textContent = payload.identified_gaps;
   renderProducts(payload.product_counts);
+  payload.products.filter(p => p.placement_status === 'wrong-shelf' || p.placement_status === 'unmatched').forEach(product => {
+    const row = document.createElement('div');
+    row.className = 'detection-row';
+    row.style.color = product.placement_status === 'wrong-shelf' ? 'var(--red)' : 'var(--amber)';
+    row.textContent = product.placement_status === 'wrong-shelf'
+      ? `ผิด shelf: ${product.class_name} → ควรเป็น ${product.expected_class} (${product.shelf_name})`
+      : `${product.class_name}: ${product.association_method === 'no-planogram' ? 'ไม่ได้เลือกแผน' : 'ระบุพื้นที่ไม่ได้'}`;
+    document.querySelector('#productList').append(row);
+  });
   renderGaps(payload.gaps);
   previewImage.src = `${payload.result_image_url}?v=${Date.now()}`;
   previewImage.alt = "ผลตรวจจับสินค้าและช่องว่าง";
-  imageCaption.textContent = `พบสินค้า ${payload.total_products} ชิ้น และ gap ${payload.total_gaps} ตำแหน่ง`;
+  imageCaption.textContent = `พบสินค้า ${payload.total_products} ชิ้น · ผิด shelf ${payload.wrong_shelf_count || 0} ชิ้น · gap ${payload.total_gaps} ตำแหน่ง`;
   resultPanel.hidden = false;
   resultPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }

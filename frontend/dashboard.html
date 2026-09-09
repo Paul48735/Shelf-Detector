@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="th">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Shelf Vision — Dashboard</title><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="dashboard.css"></head>
+<body><main class="app-shell">
+  <header class="topbar"><div><p class="eyebrow">SHELF VISION</p><h1>ภาพรวมการตรวจสอบ</h1></div><nav class="site-nav" aria-label="เมนูหลัก"><a href="dashboard.html" aria-current="page">ภาพรวม</a><a href="index.html">ตรวจจับสินค้า</a><a href="planogram.html">Planogram</a></nav></header>
+  <div class="dashboard-toolbar"><div><h2>ชั้นวางของคุณ เป็นอย่างไรบ้าง</h2><p>ดูผลทีละรอบ และรายการที่ต้องตรวจสอบ</p></div><label>กรองตามแผน<select id="planFilter"><option value="">ทุกแผน</option></select></label><a class="action-link" href="index.html">＋ ตรวจภาพใหม่</a></div>
+  <p id="loadMessage" role="status">กำลังโหลดผลตรวจ…</p><button id="retry" class="quiet-button" hidden>ลองอีกครั้ง</button>
+  <section class="metric-grid" aria-label="สรุปรอบตรวจที่เลือก">
+    <article class="metric-card"><span>สินค้าที่พบ</span><strong id="totalProducts">—</strong><small>ชิ้น</small></article>
+    <article class="metric-card danger"><span>สินค้าผิด shelf</span><strong id="wrongShelf">—</strong><small>ชิ้น</small></article>
+    <article class="metric-card warning"><span>ช่องว่างที่พบ</span><strong id="totalGaps">—</strong><small>ตำแหน่ง</small></article>
+    <article class="metric-card accent"><span>ช่องว่างที่ระบุ class ได้</span><strong id="identifiedGaps">—</strong><small>ตำแหน่ง</small></article>
+  </section><p class="round-note">ตัวเลขเป็นของรอบที่เลือก ไม่ใช่ยอดสต็อกรวม</p>
+  <section class="dashboard-layout">
+    <article class="visual-panel"><div class="section-title"><h2>ภาพผลตรวจ</h2><span id="planBadge" class="plan-badge">ยังไม่ได้เลือกรอบ</span></div><p id="runMeta" class="round-note">เลือกรายการจากประวัติเพื่อดูรายละเอียด</p><div class="dashboard-image"><p id="imageEmpty">ยังไม่มีภาพผลตรวจ</p><img id="runImage" alt="ภาพผลตรวจสินค้าและช่องว่าง" hidden></div><a id="fullImage" target="_blank" rel="noopener" hidden>เปิดภาพขนาดเต็ม ↗</a></article>
+    <aside class="visual-panel"><div class="section-title"><h2>รายการที่ต้องแก้ไข</h2><span id="issueCount" class="plan-badge">—</span></div><div id="issues"><p class="round-note">รอผลตรวจที่เลือก</p></div></aside>
+  </section>
+  <section class="result-panel"><div class="section-title"><div><h2>ประวัติการตรวจ</h2><p class="round-note">เลือกดูภาพและรายละเอียดของแต่ละรอบ</p></div><button id="refresh" class="quiet-button">รีเฟรช</button></div><div class="table-scroll"><table><thead><tr><th>ภาพ / รอบตรวจ</th><th>เวลา</th><th>Planogram</th><th>สินค้า</th><th>ผิด shelf</th><th>Gap</th><th>รายละเอียด</th></tr></thead><tbody id="history"></tbody></table></div><div class="pagination"><button id="previous" class="quiet-button" disabled>← ก่อนหน้า</button><span id="pageLabel">หน้า 1</span><button id="next" class="quiet-button" disabled>ถัดไป →</button></div></section>
+</main><script src="dashboard.js"></script></body></html>
