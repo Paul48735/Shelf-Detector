@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 import cv2
 import numpy as np
 
-from planogram import match_gap, validate_plan
+from planogram import match_gap, match_product, split_gap_by_plan, validate_plan
 from model_service import ShelfModelService
 import app as api
 
@@ -36,12 +36,44 @@ class PlanogramTests(unittest.TestCase):
         self.plan['shelves'].append(copy.deepcopy(self.plan['shelves'][0]))
         self.assertEqual(match_gap([10, 10, 30, 30], self.plan, 100, 100)['association_method'], 'ambiguous-region')
 
+    def test_plan_outline_uses_four_saved_corners(self):
+        frame = np.zeros((100, 100, 3), dtype=np.uint8)
+        points = [[.1, .1], [.8, .2], [.9, .8], [.2, .7]]
+        with patch('model_service.cv2.polylines', wraps=cv2.polylines) as outline:
+            ShelfModelService._draw_box(frame, {'box': (40, 40, 60, 60)},
+                                         (0, 88, 255), 'region', plan_points=points)
+        np.testing.assert_array_equal(outline.call_args.args[1][0],
+                                      np.array([[10, 10], [80, 20], [90, 80], [20, 70]]))
+        self.assertTrue(frame[50, 15].any())
+        self.assertFalse(frame[40, 40].any())
+
+    def test_product_center_resolves_border_overlap(self):
+        box = (10, 0, 30, 80)
+        self.assertIsNone(match_gap(box, self.plan, 100, 100)['product_class'])
+        self.assertEqual(match_product(box, self.plan, 100, 100)['product_class'], 'product-a')
+        self.assertIsNone(match_product((10, 40, 30, 60), self.plan, 100, 100)['product_class'])
+
     def test_validation(self):
         for key, value in [('product', 'unknown'), ('target', -1), ('points', [[0, 0], [1, 1], [1, 0], [0, 1]])]:
             data = copy.deepcopy(self.data)
             data['shelves'][0][key] = value
             with self.assertRaises(ValueError):
                 validate_plan(data, ['product-a', 'product-b'])
+
+    def test_one_model_gap_splits_across_two_regions(self):
+        separated_plan = dict(self.plan, shelves=[
+            dict(self.plan['shelves'][0], points=[[0, 0], [.3, 0], [.3, 1], [0, 1]]),
+            dict(self.plan['shelves'][1], points=[[.7, 0], [1, 0], [1, 1], [.7, 1]]),
+        ])
+        segments = split_gap_by_plan((0, 0, 100, 100), separated_plan, 100, 100)
+        self.assertEqual([part['product_class'] for _, part in segments], ['product-a', 'product-b'])
+        self.assertEqual([tuple(round(value) for value in box) for box, _ in segments],
+                         [(0, 0, 30, 100), (70, 0, 100, 100)])
+        self.assertEqual([part['association_method'] for _, part in segments], ['planogram', 'planogram'])
+
+        mostly_lower = split_gap_by_plan((10, 45, 90, 95), self.plan, 100, 100)
+        self.assertEqual([part['product_class'] for _, part in mostly_lower], ['product-b'])
+        self.assertIsNone(split_gap_by_plan((10, 10, 30, 30), None, 100, 100)[0][1]['product_class'])
 
     def test_database_plan_payload_and_validation_route(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(api.model_service, 'class_names', return_value=['product-a', 'product-b']):
@@ -92,6 +124,51 @@ class PlanogramTests(unittest.TestCase):
             wrong_ratio = dict(self.plan, ratio=2)
             with patch.object(service, '_models', return_value=(model, model)), self.assertRaises(ValueError):
                 service.detect_scene(source, result, .5, .5, wrong_ratio)
+
+    def test_detection_draws_and_returns_each_split_gap(self):
+        service = ShelfModelService(Path('unused'), Path('unused'))
+        model = Mock(names={0: 'gap'})
+        model.predict.return_value = [Mock()]
+        raw_gap = {'class_name': 'gap', 'confidence': .8, 'box': (10, 40, 30, 60)}
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'source.jpg'
+            result = Path(directory) / 'result.jpg'
+            cv2.imwrite(str(source), self.frame)
+            with patch.object(service, '_models', return_value=(model, model)), \
+                 patch.object(service, '_collect', side_effect=[[], [raw_gap]]), \
+                 patch.object(service, '_draw_box') as draw:
+                payload = service.detect_scene(source, result, .5, .5, self.plan)
+            self.assertEqual(payload['total_gaps'], 2)
+            self.assertEqual(payload['identified_gaps'], 2)
+            self.assertEqual([item['product_class'] for item in payload['gaps']], ['product-a', 'product-b'])
+            self.assertEqual([item['gap_number'] for item in payload['gaps']], [1, 2])
+            self.assertEqual(draw.call_count, 2)
+            self.assertEqual([call.args[-1] for call in draw.call_args_list],
+                             ['GAP -> product-a', 'GAP -> product-b'])
+            self.assertEqual([call.kwargs['plan_points'] for call in draw.call_args_list],
+                             [shelf['points'] for shelf in self.plan['shelves']])
+
+    def test_products_share_one_plan_outline_but_keep_model_boxes(self):
+        service = ShelfModelService(Path('unused'), Path('unused'))
+        model = Mock(names={0: 'gap'})
+        model.predict.return_value = [Mock()]
+        products = [
+            {'class_name': 'product-a', 'confidence': .9, 'box': (10, 10, 30, 30)},
+            {'class_name': 'product-a', 'confidence': .8, 'box': (40, 10, 60, 30)},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'source.jpg'
+            result = Path(directory) / 'result.jpg'
+            cv2.imwrite(str(source), self.frame)
+            with patch.object(service, '_models', return_value=(model, model)), \
+                 patch.object(service, '_collect', side_effect=[products, []]), \
+                 patch.object(service, '_draw_box') as draw:
+                payload = service.detect_scene(source, result, .5, .5, self.plan)
+        self.assertEqual([item['box'] for item in payload['products']],
+                         [[10, 10, 30, 30], [40, 10, 60, 30]])
+        self.assertEqual(draw.call_count, 1)
+        self.assertEqual(draw.call_args.kwargs['plan_points'], self.plan['shelves'][0]['points'])
+        self.assertEqual(draw.call_args.args[-1], 'product-a')
 
 
 if __name__ == '__main__':

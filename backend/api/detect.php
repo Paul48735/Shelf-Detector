@@ -14,7 +14,7 @@ try {
     $planId = trim((string) ($_SERVER['HTTP_X_PLANOGRAM_ID'] ?? ''));
     $plan = $planId === '' ? null : loadPlan($db, $planId, false);
     if ($planId !== '' && !$plan) inferenceJsonResponse(['success' => false, 'message' => 'ไม่พบ Planogram'], 404);
-    // รับ binary image โดยตรง เพื่อไม่สร้างไฟล์ชั่วคราวซ้ำใน PHP
+    // รับ binary image แล้วตรวจสอบก่อนส่งต่อให้ AI service
     $imageBytes = @file_get_contents('php://input');
     if ($imageBytes === false || $imageBytes === '') {
         inferenceJsonResponse(['success' => false, 'message' => 'กรุณาเลือกไฟล์ภาพ'], 400);
@@ -61,22 +61,29 @@ try {
         ], 400);
     }
 
-    $postFields = [
-        'image' => new CURLStringFile(
-            $imageBytes,
-            'upload.' . $extension,
-            $mimeType
-        ),
-        'product_confidence' => (string) $productConfidence,
-        'gap_confidence' => (string) $gapConfidence,
-        'planogram_id' => $planId,
-        'planogram' => json_encode($plan, JSON_THROW_ON_ERROR),
-    ];
-
-    [$statusCode, $response] = callAiService(
-        AI_SERVICE_URL . '/predict',
-        [CURLOPT_POST => true, CURLOPT_POSTFIELDS => $postFields]
-    );
+    // XAMPP ใช้ PHP 8.0 ซึ่งไม่มี CURLStringFile จึงใช้ CURLFile กับไฟล์ชั่วคราว
+    $tempImage = tempnam(sys_get_temp_dir(), 'shelf_');
+    if ($tempImage === false) {
+        throw new RuntimeException('ไม่สามารถสร้างไฟล์ภาพชั่วคราวได้');
+    }
+    try {
+        if (file_put_contents($tempImage, $imageBytes, LOCK_EX) !== strlen($imageBytes)) {
+            throw new RuntimeException('ไม่สามารถเตรียมไฟล์ภาพเพื่อส่งให้ AI service ได้');
+        }
+        $postFields = [
+            'image' => new CURLFile($tempImage, $mimeType, 'upload.' . $extension),
+            'product_confidence' => (string) $productConfidence,
+            'gap_confidence' => (string) $gapConfidence,
+            'planogram_id' => $planId,
+            'planogram' => json_encode($plan, JSON_THROW_ON_ERROR),
+        ];
+        [$statusCode, $response] = callAiService(
+            AI_SERVICE_URL . '/predict',
+            [CURLOPT_POST => true, CURLOPT_POSTFIELDS => $postFields]
+        );
+    } finally {
+        @unlink($tempImage);
+    }
     if ($statusCode === 200 && !empty($response['success'])) {
         $response['detection_run_id'] = saveDetection($db, $response, $planId ?: null);
     }

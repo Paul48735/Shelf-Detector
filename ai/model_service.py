@@ -3,7 +3,7 @@ from pathlib import Path
 
 import cv2
 from ultralytics import YOLO
-from planogram import match_gap
+from planogram import match_product, split_gap_by_plan
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
@@ -71,13 +71,24 @@ class ShelfModelService:
         return detections
 
     @staticmethod
-    def _draw_box(image, detection, color, label):
-        x1, y1, x2, y2 = map(int, detection["box"])
+    def _draw_box(image, detection, color, label, plan_points=None):
         scale = max(1.0, image.shape[1] / 1400)
-        padding = round(14 * scale)
-        x1, y1 = max(0, x1 - padding), max(0, y1 - padding)
-        x2, y2 = min(image.shape[1] - 1, x2 + padding), min(image.shape[0] - 1, y2 + padding)
-        cv2.rectangle(image, (x1, y1), (x2, y2), color, max(4, round(5 * scale)))
+        if plan_points is None:
+            x1, y1, x2, y2 = map(int, detection["box"])
+            padding = round(14 * scale)
+            x1, y1 = max(0, x1 - padding), max(0, y1 - padding)
+            x2, y2 = min(image.shape[1] - 1, x2 + padding), min(image.shape[0] - 1, y2 + padding)
+            cv2.rectangle(image, (x1, y1), (x2, y2), color, max(4, round(5 * scale)))
+        else:
+            # Use the same four normalized corners as the Planogram editor.
+            polygon = np.array(plan_points, dtype=np.float32) * np.array(
+                [image.shape[1], image.shape[0]], dtype=np.float32
+            )
+            polygon = np.rint(polygon).astype(np.int32)
+            polygon[:, 0] = np.clip(polygon[:, 0], 0, image.shape[1] - 1)
+            polygon[:, 1] = np.clip(polygon[:, 1], 0, image.shape[0] - 1)
+            cv2.polylines(image, [polygon], True, color, max(4, round(5 * scale)))
+            x1, y1 = polygon.min(axis=0)
         if 'ผิด shelf' in label:
             font_path = Path('C:/Windows/Fonts/tahoma.ttf')
             if font_path.is_file():
@@ -162,43 +173,52 @@ class ShelfModelService:
         )
 
         annotated = image.copy()
+        regions = {shelf['id']: shelf for shelf in plan['shelves']} if plan else {}
+        products_by_region = {}
         for product in products:
-            association = match_gap(product['box'], plan, image.shape[1], image.shape[0])
+            association = match_product(product['box'], plan, image.shape[1], image.shape[0])
             expected = association['product_class']
             status = 'unmatched' if expected is None else ('correct' if product['class_name'] == expected else 'wrong-shelf')
             product.update(expected_class=expected, region_id=association['shelf_id'],
                            shelf_name=association['shelf_name'], placement_status=status,
                            association_method=association['association_method'],
                            overlap_ratio=association.get('overlap_ratio'))
-            color = (41, 211, 163) if status == 'correct' else (0, 0, 230) if status == 'wrong-shelf' else (0, 190, 255)
-            label = f"{product['class_name']} {product['confidence']:.2f}"
-            if status == 'wrong-shelf':
-                label = f"ผิด shelf | Found: {product['class_name']} | Expected: {expected}"
-            elif status == 'unmatched':
-                label += ' [UNMATCHED]'
-            self._draw_box(
-                annotated,
-                product,
-                color,
-                label,
-            )
+            if association['shelf_id'] is not None:
+                products_by_region.setdefault(association['shelf_id'], []).append(product)
+            else:
+                self._draw_box(annotated, product, (0, 190, 255),
+                               f"{product['class_name']} {product['confidence']:.2f}")
+
+        for region_id, region_products in products_by_region.items():
+            wrong = [item for item in region_products if item['placement_status'] == 'wrong-shelf']
+            representative = max(wrong or region_products, key=lambda item: item['confidence'])
+            if wrong:
+                label = (f"ผิด shelf | Found: {representative['class_name']}"
+                         f" | Expected: {representative['expected_class']}")
+                color = (0, 0, 230)
+            else:
+                label = representative['expected_class']
+                color = (41, 211, 163)
+            self._draw_box(annotated, representative, color, label,
+                           plan_points=regions[region_id]['points'])
 
         gaps = []
-        for index, gap in enumerate(raw_gaps, start=1):
-            association = match_gap(gap["box"], plan, image.shape[1], image.shape[0])
-            product_name = association["product_class"]
-            gap_data = {
-                "gap_number": index,
-                **association,
-                "confidence": round(gap["confidence"], 4),
-                "box": [round(value, 2) for value in gap["box"]],
-            }
-            gaps.append(gap_data)
-            gap_label = (
-                f"GAP -> {product_name}" if product_name else "GAP -> UNKNOWN"
-            )
-            color = (0, 88, 255) if product_name else (120, 120, 120)
-            self._draw_box(annotated, gap, color, gap_label)
+        drawn_gap_regions = set()
+        for gap in raw_gaps:
+            for box, association in split_gap_by_plan(gap["box"], plan, image.shape[1], image.shape[0]):
+                product_name = association["product_class"]
+                gap_data = {
+                    "gap_number": len(gaps) + 1,
+                    **association,
+                    "confidence": round(gap["confidence"], 4),
+                    "box": [round(value, 2) for value in box],
+                }
+                gaps.append(gap_data)
+                region_id = association['shelf_id']
+                if product_name is not None and region_id not in drawn_gap_regions:
+                    self._draw_box(annotated, {"box": box}, (0, 88, 255),
+                                   f"GAP -> {product_name}", plan_points=regions[region_id]['points'])
+                    drawn_gap_regions.add(region_id)
 
         result_path.parent.mkdir(parents=True, exist_ok=True)
         if not cv2.imwrite(str(result_path), annotated):

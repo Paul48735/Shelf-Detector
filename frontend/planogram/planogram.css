@@ -1,0 +1,10 @@
+#editor {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: manipulation;
+}
+
+#editor.drawing {
+  cursor: crosshair;
+}

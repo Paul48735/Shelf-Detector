@@ -1,4 +1,4 @@
-const API_BASE = "../backend/api";
+const API_BASE = "../../backend/api";
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
@@ -79,35 +79,43 @@ function renderProducts(counts) {
   const entries = Object.entries(counts);
   list.innerHTML = "";
   if (!entries.length) {
-    list.innerHTML = '<p class="empty-row">ไม่พบสินค้าในภาพ</p>';
+    list.innerHTML = '<div class="list-group-item text-body-secondary">ไม่พบสินค้าในภาพ</div>';
     return;
   }
   entries.forEach(([name, count]) => {
     const row = document.createElement("div");
-    row.className = "detection-row";
-    row.innerHTML = `<span>${name}</span><strong>${count} ชิ้น</strong>`;
+    row.className = "list-group-item d-flex justify-content-between align-items-start gap-3";
+    const label = document.createElement("span");
+    label.textContent = name;
+    const quantity = document.createElement("strong");
+    quantity.className = "text-primary text-end";
+    quantity.textContent = `${count} ชิ้น`;
+    row.append(label, quantity);
     list.append(row);
   });
 }
 
 function renderGaps(gaps) {
   const list = document.querySelector("#gapList");
+  const visibleGaps = gaps.filter(gap => gap.product_class);
   list.innerHTML = "";
-  if (!gaps.length) {
-    list.innerHTML = '<p class="empty-row">ไม่พบช่องว่างในภาพ</p>';
+  if (!visibleGaps.length) {
+    list.innerHTML = '<div class="list-group-item text-body-secondary">ไม่มีช่องว่างที่ระบุสินค้าได้</div>';
     return;
   }
-  gaps.forEach((gap) => {
+  visibleGaps.forEach((gap) => {
     const row = document.createElement("div");
-    row.className = "detection-row";
-    const product = gap.product_class || "ไม่สามารถระบุสินค้าได้";
+    row.className = "list-group-item d-flex justify-content-between align-items-start gap-3";
+    const product = gap.product_class;
     const labels = { planogram: `ตามแผน: ${gap.shelf_name}`, 'no-planogram': 'ไม่ได้เลือกแผน', 'ambiguous-region': 'ทับซ้อนหลายพื้นที่', 'outside-planogram': 'ระบุพื้นที่ไม่ได้' };
     const title = document.createElement('span');
     title.textContent = `Gap ${gap.gap_number}`;
     const detail = document.createElement('small');
     detail.textContent = labels[gap.association_method] || 'ระบุพื้นที่ไม่ได้';
+    detail.className = 'd-block text-body-secondary';
     const name = document.createElement('strong');
     name.textContent = product;
+    name.className = 'text-primary text-end';
     title.append(detail); row.append(title, name);
     list.append(row);
   });
@@ -119,19 +127,16 @@ function showResult(payload) {
   document.querySelector("#totalGaps").textContent = payload.total_gaps;
   document.querySelector("#identifiedGaps").textContent = payload.identified_gaps;
   renderProducts(payload.product_counts);
-  payload.products.filter(p => p.placement_status === 'wrong-shelf' || p.placement_status === 'unmatched').forEach(product => {
+  payload.products.filter(p => p.placement_status === 'wrong-shelf').forEach(product => {
     const row = document.createElement('div');
-    row.className = 'detection-row';
-    row.style.color = product.placement_status === 'wrong-shelf' ? 'var(--red)' : 'var(--amber)';
-    row.textContent = product.placement_status === 'wrong-shelf'
-      ? `ผิด shelf: ${product.class_name} → ควรเป็น ${product.expected_class} (${product.shelf_name})`
-      : `${product.class_name}: ${product.association_method === 'no-planogram' ? 'ไม่ได้เลือกแผน' : 'ระบุพื้นที่ไม่ได้'}`;
+    row.className = 'list-group-item text-danger';
+    row.textContent = `ผิด shelf: ${product.class_name} → ควรเป็น ${product.expected_class} (${product.shelf_name})`;
     document.querySelector('#productList').append(row);
   });
   renderGaps(payload.gaps);
   previewImage.src = `${payload.result_image_url}?v=${Date.now()}`;
   previewImage.alt = "ผลตรวจจับสินค้าและช่องว่าง";
-  imageCaption.textContent = `พบสินค้า ${payload.total_products} ชิ้น · ผิด shelf ${payload.wrong_shelf_count || 0} ชิ้น · gap ${payload.total_gaps} ตำแหน่ง`;
+  imageCaption.textContent = `พบสินค้า ${payload.total_products} ชิ้น · ผิด shelf ${payload.wrong_shelf_count || 0} ชิ้น · gap ที่ระบุได้ ${payload.identified_gaps} ตำแหน่ง`;
   resultPanel.hidden = false;
   resultPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -142,10 +147,10 @@ async function checkService() {
     const response = await fetch(`${API_BASE}/classes.php`);
     const payload = await readJsonResponse(response);
     if (!response.ok || !payload.success) throw new Error(payload.message);
-    status.className = "service-status ready";
+    status.className = "service-status badge rounded-pill text-bg-success d-inline-flex align-items-center gap-2";
     status.querySelector("span:last-child").textContent = `2 โมเดลพร้อม · สินค้า ${payload.count} คลาส`;
   } catch {
-    status.className = "service-status offline";
+    status.className = "service-status badge rounded-pill text-bg-danger d-inline-flex align-items-center gap-2";
     status.querySelector("span:last-child").textContent = "AI service ไม่พร้อม";
   }
 }

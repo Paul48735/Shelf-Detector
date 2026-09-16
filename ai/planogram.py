@@ -81,6 +81,68 @@ def match_gap(box, plan, width, height):
             'shelf_id': shelf['id'], 'shelf_name': shelf['name'], 'overlap_ratio': round(ratio, 4)}
 
 
+def match_product(box, plan, width, height):
+    """Allow a model box that crosses a region edge when its center is clearly inside."""
+    association = match_gap(box, plan, width, height)
+    if plan is None or association['product_class'] is not None:
+        return association
+    x1, y1, x2, y2 = box
+    area = max(0, x2 - x1) * max(0, y2 - y1)
+    if area == 0:
+        return association
+    center = ((x1 + x2) / 2, (y1 + y2) / 2)
+    rectangle = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], dtype=np.float32)
+    candidates = []
+    for shelf in plan['shelves']:
+        polygon = np.array(shelf['points'], dtype=np.float32) * np.array([width, height], dtype=np.float32)
+        if cv2.pointPolygonTest(polygon, center, False) <= 0:
+            continue
+        overlap, _ = cv2.intersectConvexConvex(rectangle, polygon)
+        ratio = float(overlap) / area
+        if ratio >= 0.5:
+            candidates.append((shelf, ratio))
+    if len(candidates) != 1:
+        return association
+    shelf, ratio = candidates[0]
+    return {'product_class': shelf['product'], 'association_method': 'planogram',
+            'shelf_id': shelf['id'], 'shelf_name': shelf['name'], 'overlap_ratio': round(ratio, 4)}
+
+
+def split_gap_by_plan(box, plan, width, height):
+    """Clip one model gap to each substantially covered plan region."""
+    if plan is None:
+        return [(box, match_gap(box, None, width, height))]
+
+    x1, y1, x2, y2 = box
+    gap_area = max(0, x2 - x1) * max(0, y2 - y1)
+    if gap_area == 0:
+        return [(box, match_gap(box, plan, width, height))]
+    gap_polygon = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], dtype=np.float32)
+    segments = []
+    for shelf in plan['shelves']:
+        region = np.array(shelf['points'], dtype=np.float32) * np.array([width, height], dtype=np.float32)
+        region_area = cv2.contourArea(region)
+        overlap, intersection = cv2.intersectConvexConvex(gap_polygon, region)
+        if not region_area or overlap <= 0 or intersection is None:
+            continue
+        # A small gap inside a large region and a merged gap across regions both count.
+        gap_coverage = float(overlap) / gap_area
+        region_coverage = float(overlap) / region_area
+        if max(gap_coverage, region_coverage) < 0.5:
+            continue
+        corners = intersection.reshape(-1, 2)
+        left, top = corners.min(axis=0)
+        right, bottom = corners.max(axis=0)
+        if right <= left or bottom <= top:
+            continue
+        segments.append(((float(left), float(top), float(right), float(bottom)), {
+            'product_class': shelf['product'], 'association_method': 'planogram',
+            'shelf_id': shelf['id'], 'shelf_name': shelf['name'],
+            'overlap_ratio': round(min(1.0, gap_coverage), 4),
+        }))
+    return segments or [(box, match_gap(box, plan, width, height))]
+
+
 def validate_inference_plan(data, classes):
     if not isinstance(data, dict):
         raise ValueError('Invalid planogram')

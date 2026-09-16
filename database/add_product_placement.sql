@@ -1,5 +1,5 @@
 -- Run once on the existing database; existing results remain unchecked.
-USE shelf_detection;
+USE shelf_detection_v2;
 ALTER TABLE detected_products
   ADD COLUMN planogram_id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL,
   ADD COLUMN region_id VARCHAR(100) COLLATE utf8mb4_bin NULL,
