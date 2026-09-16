@@ -1,7 +1,22 @@
 <?php
 require_once __DIR__ . '/../config/repository.php';
 handleCors();
-if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') jsonResponse(['success' => false, 'message' => 'Method not allowed'], 405);
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+if ($method === 'DELETE') {
+    $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    if ($origin !== '' && $origin !== $scheme . '://' . ($_SERVER['HTTP_HOST'] ?? '')) {
+        jsonResponse(['success' => false, 'message' => 'Invalid origin'], 403);
+    }
+    try {
+        if ((getJsonInput()['confirm'] ?? null) !== 'clear-all-detections') {
+            throw new InvalidArgumentException('Confirmation required');
+        }
+        $summary = clearDetectionHistory(getDB(), dirname(__DIR__, 2));
+        jsonResponse(['success' => true, 'data' => $summary]);
+    } catch (Throwable $error) { databaseApiError($error); }
+}
+if ($method !== 'GET') jsonResponse(['success' => false, 'message' => 'Method not allowed'], 405);
 try {
     $db = getDB();
     if (isset($_GET['id'])) {

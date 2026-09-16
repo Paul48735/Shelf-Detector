@@ -177,7 +177,7 @@ class ShelfModelService:
         products_by_region = {}
         for product in products:
             association = match_product(product['box'], plan, image.shape[1], image.shape[0])
-            expected = association['product_class']
+            expected = association['expected_class']
             status = 'unmatched' if expected is None else ('correct' if product['class_name'] == expected else 'wrong-shelf')
             product.update(expected_class=expected, region_id=association['shelf_id'],
                            shelf_name=association['shelf_name'], placement_status=status,
@@ -206,6 +206,9 @@ class ShelfModelService:
         drawn_gap_regions = set()
         for gap in raw_gaps:
             for box, association in split_gap_by_plan(gap["box"], plan, image.shape[1], image.shape[0]):
+                # A detected product takes precedence over empty space in the same plan region.
+                if association['shelf_id'] in products_by_region:
+                    continue
                 product_name = association["product_class"]
                 gap_data = {
                     "gap_number": len(gaps) + 1,

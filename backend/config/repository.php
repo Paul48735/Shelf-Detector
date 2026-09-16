@@ -91,6 +91,40 @@ function saveDetection(PDO $db, array $result, ?string $planId): int
     }
 }
 
+function clearDetectionHistory(PDO $db, string $projectRoot): array
+{
+    $db->beginTransaction();
+    try {
+        $runs = $db->query('SELECT input_image_path, result_image_path FROM detection_runs')->fetchAll();
+        $deletedRuns = (int)$db->exec('DELETE FROM detection_runs');
+        $db->commit();
+    } catch (Throwable $error) {
+        if ($db->inTransaction()) $db->rollBack();
+        throw $error;
+    }
+
+    $deletedFiles = 0;
+    $failedFiles = 0;
+    $paths = [];
+    foreach ($runs as $run) {
+        $paths[$run['input_image_path']] = true;
+        $paths[$run['result_image_path']] = true;
+    }
+    foreach (array_keys($paths) as $relative) {
+        // Only files created for detection runs may be removed; planogram images stay intact.
+        if (!preg_match('~^storage/(uploads|results)/[a-f0-9]{32}\.(jpg|jpeg|png|webp)$~iD', $relative)) {
+            ++$failedFiles;
+            continue;
+        }
+        $path = $projectRoot . '/' . $relative;
+        if (!is_file($path)) continue;
+        if (@unlink($path)) ++$deletedFiles;
+        else ++$failedFiles;
+    }
+
+    return ['deleted_runs' => $deletedRuns, 'deleted_files' => $deletedFiles, 'failed_files' => $failedFiles];
+}
+
 function databaseApiError(Throwable $error): void
 {
     if ($error instanceof InvalidArgumentException || $error instanceof JsonException) {

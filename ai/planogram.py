@@ -60,7 +60,7 @@ def validate_regions(data, classes):
         cleaned.append({k: shelf[k].strip() for k in ('id', 'name', 'product')} | {'target': target, 'points': points})
     return cleaned
 
-
+## จับคู่ Gap ที่โมเดลตรวจพบกับพื้นที่ใน Planogram
 def match_gap(box, plan, width, height):
     if plan is None:
         return {'product_class': None, 'association_method': 'no-planogram', 'shelf_id': None, 'shelf_name': None}
@@ -80,32 +80,12 @@ def match_gap(box, plan, width, height):
     return {'product_class': shelf['product'], 'association_method': 'planogram',
             'shelf_id': shelf['id'], 'shelf_name': shelf['name'], 'overlap_ratio': round(ratio, 4)}
 
-
+## จับคู่ Product ที่โมเดลตรวจพบกับพื้นที่ใน Planogram
 def match_product(box, plan, width, height):
-    """Allow a model box that crosses a region edge when its center is clearly inside."""
+    """Match only the product box's position; keep the model class separate."""
     association = match_gap(box, plan, width, height)
-    if plan is None or association['product_class'] is not None:
-        return association
-    x1, y1, x2, y2 = box
-    area = max(0, x2 - x1) * max(0, y2 - y1)
-    if area == 0:
-        return association
-    center = ((x1 + x2) / 2, (y1 + y2) / 2)
-    rectangle = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], dtype=np.float32)
-    candidates = []
-    for shelf in plan['shelves']:
-        polygon = np.array(shelf['points'], dtype=np.float32) * np.array([width, height], dtype=np.float32)
-        if cv2.pointPolygonTest(polygon, center, False) <= 0:
-            continue
-        overlap, _ = cv2.intersectConvexConvex(rectangle, polygon)
-        ratio = float(overlap) / area
-        if ratio >= 0.5:
-            candidates.append((shelf, ratio))
-    if len(candidates) != 1:
-        return association
-    shelf, ratio = candidates[0]
-    return {'product_class': shelf['product'], 'association_method': 'planogram',
-            'shelf_id': shelf['id'], 'shelf_name': shelf['name'], 'overlap_ratio': round(ratio, 4)}
+    association['expected_class'] = association.pop('product_class')
+    return association
 
 
 def split_gap_by_plan(box, plan, width, height):

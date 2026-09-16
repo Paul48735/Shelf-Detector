@@ -19,6 +19,7 @@ let activeId = null;
 let draft = [];
 let dirty = false;
 let loadingImage = false;
+let productClasses = [];
 
 function message(text, error = false) {
   const status = $("message");
@@ -132,17 +133,23 @@ function renderShelves() {
       const label = document.createElement("label");
       label.textContent = title;
       label.className = "form-label d-block fw-semibold mb-3";
-      const input = document.createElement("input");
+      const input = document.createElement(key === "product" ? "select" : "input");
+      input.className = key === "product" ? "form-select mt-1" : "form-control mt-1";
+      if (key === "product") {
+        input.append(new Option("เลือกคลาสสินค้า", ""));
+        productClasses.forEach((name) => input.append(new Option(name, name)));
+        if (shelf.product && !productClasses.includes(shelf.product))
+          input.append(new Option(`${shelf.product} (คลาสเดิม)`, shelf.product));
+      } else {
+        input.type = key === "target" ? "number" : "text";
+        if (key === "target") {
+          input.min = "1";
+          input.max = "999";
+          input.step = "1";
+        } else input.maxLength = 100;
+      }
       input.value = shelf[key];
-      input.className = "form-control mt-1";
-      input.type = key === "target" ? "number" : "text";
-      if (key === "target") {
-        input.min = "1";
-        input.max = "999";
-        input.step = "1";
-      } else input.maxLength = 100;
-      if (key === "product") input.setAttribute("list", "productClasses");
-      input.addEventListener("input", () => {
+      input.addEventListener(key === "product" ? "change" : "input", () => {
         shelf[key] = key === "target" ? Number(input.value) : input.value;
         changed();
         draw();
@@ -299,6 +306,8 @@ $("savePlan").onclick = async () => {
       "ทุกชั้นต้องมีชื่อ สินค้า จำนวนเต็ม 1–999 และกรอบครบ 4 มุม",
       true,
     );
+  if (plan.shelves.some((s) => !productClasses.includes(s.product)))
+    return message("กรุณาเลือกคลาสสินค้าจากรายการที่โหลดได้", true);
   const snapshot = JSON.stringify(plan);
   $("savePlan").disabled = true;
   try {
@@ -385,20 +394,29 @@ fetch("../../backend/api/planogram.php")
   .finally(() => {
     document.querySelector(".workspace").inert = false;
   });
-fetch("../../backend/api/classes.php")
-  .then(async (response) => {
+async function loadProductClasses() {
+  let source = "โมเดล";
+  try {
+    const response = await fetch("../../backend/api/classes.php");
     const payload = await response.json();
-    if (!response.ok || !payload.success || !Array.isArray(payload.data))
-      throw new Error();
-    payload.data.forEach((name) => {
-      const option = document.createElement("option");
-      option.value = name;
-      $("productClasses").append(option);
-    });
-    $("classStatus").textContent =
-      `เลือกสินค้าได้ ${payload.data.length} คลาส หรือพิมพ์ชื่อคลาสเอง`;
-  })
-  .catch(() => {
-    $("classStatus").textContent =
-      "AI service ไม่พร้อม สามารถพิมพ์ชื่อคลาสสินค้าเองได้";
-  });
+    if (!response.ok || !payload.success || !Array.isArray(payload.data) || !payload.data.length)
+      throw new Error("โหลดคลาสจากโมเดลไม่ได้");
+    productClasses = payload.data;
+  } catch {
+    try {
+      const response = await fetch("../../backend/api/products.php");
+      const payload = await response.json();
+      if (!response.ok || !payload.success || !Array.isArray(payload.data) || !payload.data.length)
+        throw new Error("โหลดคลาสจากฐานข้อมูลไม่ได้");
+      productClasses = payload.data.slice().reverse().map((product) => product.yolo_class_name);
+      source = "ฐานข้อมูลสินค้า";
+    } catch {
+      $("classStatus").textContent = "โหลดรายชื่อคลาสไม่ได้ กรุณาตรวจสอบ AI service และฐานข้อมูล";
+      return;
+    }
+  }
+  productClasses = [...new Set(productClasses.filter((name) => typeof name === "string" && name))];
+  renderShelves();
+  $("classStatus").textContent = `เลือกได้ ${productClasses.length} คลาสจาก${source}`;
+}
+loadProductClasses();

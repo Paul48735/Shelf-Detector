@@ -149,7 +149,7 @@ async function selectRun(id) {
           "small text-body-secondary mb-0",
         ),
       );
-    $("loadMessage").textContent = `แสดงผลรอบ #${id}`;
+    $("loadMessage").textContent = `แสดงผลรอบ ${id}`;
   } catch (error) {
     if (version === detailVersion)
       $("loadMessage").textContent = `โหลดรายละเอียดไม่ได้: ${error.message}`;
@@ -222,6 +222,32 @@ $("planFilter").onchange = () => {
   loadHistory();
 };
 $("refresh").onclick = $("retry").onclick = () => loadHistory();
+$("clearHistory").onclick = async () => {
+  if (!confirm("ลบประวัติการตรวจทั้งหมด รวมถึงภาพอัปโหลดและภาพผลตรวจ? การลบนี้ย้อนกลับไม่ได้")) return;
+  const button = $("clearHistory");
+  button.disabled = true;
+  ++listVersion;
+  ++detailVersion;
+  try {
+    const response = await fetch(`${API}/detections.php`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: "clear-all-detections" }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.success)
+      throw new Error(result.message || "ล้างประวัติไม่สำเร็จ");
+    offset = 0;
+    await loadHistory();
+    const { deleted_runs: runs, failed_files: failed } = result.data;
+    $("loadMessage").textContent = `ลบประวัติ ${runs} รอบแล้ว` +
+      (failed ? ` · ลบไฟล์ภาพไม่ได้ ${failed} ไฟล์ (ตรวจสอบสิทธิ์โฟลเดอร์ storage)` : "");
+  } catch (error) {
+    $("loadMessage").textContent = `ล้างประวัติไม่ได้: ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+};
 $("next").onclick = () => {
   offset += pageSize;
   loadHistory();

@@ -16,7 +16,7 @@ const emptyState = document.querySelector("#emptyState");
 const imageStage = document.querySelector("#imageStage");
 const imageCaption = document.querySelector("#imageCaption");
 const resultPanel = document.querySelector("#resultPanel");
-const planogramSelect = document.querySelector('#planogramSelect');
+const planogramSelect = document.querySelector("#planogramSelect");
 
 let selectedFile = null;
 let previewUrl = null;
@@ -50,8 +50,10 @@ function setPreview(file) {
 function acceptFile(file) {
   setError();
   if (!file) return;
-  if (!ALLOWED_TYPES.includes(file.type)) return setError("รองรับเฉพาะไฟล์ JPG, PNG และ WEBP");
-  if (file.size > MAX_FILE_SIZE) return setError("ไฟล์ภาพต้องมีขนาดไม่เกิน 10 MB");
+  if (!ALLOWED_TYPES.includes(file.type))
+    return setError("รองรับเฉพาะไฟล์ JPG, PNG และ WEBP");
+  if (file.size > MAX_FILE_SIZE)
+    return setError("ไฟล์ภาพต้องมีขนาดไม่เกิน 10 MB");
   selectedFile = file;
   fileName.textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
   fileInfo.hidden = false;
@@ -79,12 +81,14 @@ function renderProducts(counts) {
   const entries = Object.entries(counts);
   list.innerHTML = "";
   if (!entries.length) {
-    list.innerHTML = '<div class="list-group-item text-body-secondary">ไม่พบสินค้าในภาพ</div>';
+    list.innerHTML =
+      '<div class="list-group-item text-body-secondary">ไม่พบสินค้าในภาพ</div>';
     return;
   }
   entries.forEach(([name, count]) => {
     const row = document.createElement("div");
-    row.className = "list-group-item d-flex justify-content-between align-items-start gap-3";
+    row.className =
+      "list-group-item d-flex justify-content-between align-items-start gap-3";
     const label = document.createElement("span");
     label.textContent = name;
     const quantity = document.createElement("strong");
@@ -97,42 +101,55 @@ function renderProducts(counts) {
 
 function renderGaps(gaps) {
   const list = document.querySelector("#gapList");
-  const visibleGaps = gaps.filter(gap => gap.product_class);
+  const visibleGaps = gaps.filter((gap) => gap.product_class);
   list.innerHTML = "";
   if (!visibleGaps.length) {
-    list.innerHTML = '<div class="list-group-item text-body-secondary">ไม่มีช่องว่างที่ระบุสินค้าได้</div>';
+    list.innerHTML =
+      '<div class="list-group-item text-body-secondary">ไม่มีช่องว่างที่ระบุสินค้าได้</div>';
     return;
   }
   visibleGaps.forEach((gap) => {
     const row = document.createElement("div");
-    row.className = "list-group-item d-flex justify-content-between align-items-start gap-3";
+    row.className =
+      "list-group-item d-flex justify-content-between align-items-start gap-3";
     const product = gap.product_class;
-    const labels = { planogram: `ตามแผน: ${gap.shelf_name}`, 'no-planogram': 'ไม่ได้เลือกแผน', 'ambiguous-region': 'ทับซ้อนหลายพื้นที่', 'outside-planogram': 'ระบุพื้นที่ไม่ได้' };
-    const title = document.createElement('span');
-    title.textContent = `Gap ${gap.gap_number}`;
-    const detail = document.createElement('small');
-    detail.textContent = labels[gap.association_method] || 'ระบุพื้นที่ไม่ได้';
-    detail.className = 'd-block text-body-secondary';
-    const name = document.createElement('strong');
+    const labels = {
+      planogram: `ตามแผน: ${gap.shelf_name}`,
+      "no-planogram": "ไม่ได้เลือกแผน",
+      "ambiguous-region": "ทับซ้อนหลายพื้นที่",
+      "outside-planogram": "ระบุพื้นที่ไม่ได้",
+    };
+    const title = document.createElement("span");
+    title.textContent = `Out Stock ${gap.gap_number}`;
+    const detail = document.createElement("small");
+    detail.textContent = labels[gap.association_method] || "ระบุพื้นที่ไม่ได้";
+    detail.className = "d-block text-body-secondary";
+    const name = document.createElement("strong");
     name.textContent = product;
-    name.className = 'text-primary text-end';
-    title.append(detail); row.append(title, name);
+    name.className = "text-primary text-end";
+    title.append(detail);
+    row.append(title, name);
     list.append(row);
   });
 }
 
 function showResult(payload) {
   document.querySelector("#totalProducts").textContent = payload.total_products;
-  document.querySelector("#totalClasses").textContent = Object.keys(payload.product_counts).length;
+  document.querySelector("#totalClasses").textContent = Object.keys(
+    payload.product_counts,
+  ).length;
   document.querySelector("#totalGaps").textContent = payload.total_gaps;
-  document.querySelector("#identifiedGaps").textContent = payload.identified_gaps;
+  document.querySelector("#identifiedGaps").textContent =
+    payload.identified_gaps;
   renderProducts(payload.product_counts);
-  payload.products.filter(p => p.placement_status === 'wrong-shelf').forEach(product => {
-    const row = document.createElement('div');
-    row.className = 'list-group-item text-danger';
-    row.textContent = `ผิด shelf: ${product.class_name} → ควรเป็น ${product.expected_class} (${product.shelf_name})`;
-    document.querySelector('#productList').append(row);
-  });
+  payload.products
+    .filter((p) => p.placement_status === "wrong-shelf")
+    .forEach((product) => {
+      const row = document.createElement("div");
+      row.className = "list-group-item text-danger";
+      row.textContent = `ผิด shelf: ${product.class_name} → ควรเป็น ${product.expected_class} (${product.shelf_name})`;
+      document.querySelector("#productList").append(row);
+    });
   renderGaps(payload.gaps);
   previewImage.src = `${payload.result_image_url}?v=${Date.now()}`;
   previewImage.alt = "ผลตรวจจับสินค้าและช่องว่าง";
@@ -147,32 +164,45 @@ async function checkService() {
     const response = await fetch(`${API_BASE}/classes.php`);
     const payload = await readJsonResponse(response);
     if (!response.ok || !payload.success) throw new Error(payload.message);
-    status.className = "service-status badge rounded-pill text-bg-success d-inline-flex align-items-center gap-2";
-    status.querySelector("span:last-child").textContent = `2 โมเดลพร้อม · สินค้า ${payload.count} คลาส`;
+    status.className =
+      "service-status badge rounded-pill text-bg-success d-inline-flex align-items-center gap-2";
+    status.querySelector("span:last-child").textContent =
+      `2 โมเดลพร้อม · สินค้า ${payload.count} คลาส`;
   } catch {
-    status.className = "service-status badge rounded-pill text-bg-danger d-inline-flex align-items-center gap-2";
+    status.className =
+      "service-status badge rounded-pill text-bg-danger d-inline-flex align-items-center gap-2";
     status.querySelector("span:last-child").textContent = "AI service ไม่พร้อม";
   }
 }
 
 productConfidence.addEventListener("input", () => {
-  document.querySelector("#productConfidenceValue").textContent = Number(productConfidence.value).toFixed(2);
+  document.querySelector("#productConfidenceValue").textContent = Number(
+    productConfidence.value,
+  ).toFixed(2);
 });
 gapConfidence.addEventListener("input", () => {
-  document.querySelector("#gapConfidenceValue").textContent = Number(gapConfidence.value).toFixed(2);
+  document.querySelector("#gapConfidenceValue").textContent = Number(
+    gapConfidence.value,
+  ).toFixed(2);
 });
 imageInput.addEventListener("change", () => acceptFile(imageInput.files[0]));
 document.querySelector("#removeFile").addEventListener("click", clearFile);
 
-["dragenter", "dragover"].forEach((name) => dropZone.addEventListener(name, (event) => {
-  event.preventDefault();
-  dropZone.classList.add("dragging");
-}));
-["dragleave", "drop"].forEach((name) => dropZone.addEventListener(name, (event) => {
-  event.preventDefault();
-  dropZone.classList.remove("dragging");
-}));
-dropZone.addEventListener("drop", (event) => acceptFile(event.dataTransfer.files[0]));
+["dragenter", "dragover"].forEach((name) =>
+  dropZone.addEventListener(name, (event) => {
+    event.preventDefault();
+    dropZone.classList.add("dragging");
+  }),
+);
+["dragleave", "drop"].forEach((name) =>
+  dropZone.addEventListener(name, (event) => {
+    event.preventDefault();
+    dropZone.classList.remove("dragging");
+  }),
+);
+dropZone.addEventListener("drop", (event) =>
+  acceptFile(event.dataTransfer.files[0]),
+);
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -198,7 +228,8 @@ form.addEventListener("submit", async (event) => {
       body: selectedFile,
     });
     const payload = await readJsonResponse(response);
-    if (!response.ok || !payload.success) throw new Error(payload.message || "ประมวลผลไม่สำเร็จ");
+    if (!response.ok || !payload.success)
+      throw new Error(payload.message || "ประมวลผลไม่สำเร็จ");
     showResult(payload);
   } catch (error) {
     setError(error.message);
@@ -212,13 +243,22 @@ form.addEventListener("submit", async (event) => {
 
 checkService();
 
-fetch(`${API_BASE}/planogram.php`).then(async response => {
-  const payload = await readJsonResponse(response);
-  if (!response.ok || !payload.success) throw new Error(payload.message);
-  if (payload.data) {
-    const option = document.createElement('option');
-    option.value = payload.data.id; option.textContent = payload.data.name;
-    planogramSelect.append(option);
-    document.querySelector('#planogramStatus').textContent = 'เลือกแผนที่ตรงกับชั้นวางและมุมกล้องของภาพ';
-  } else document.querySelector('#planogramStatus').textContent = 'ยังไม่มีแผน กรุณาบันทึกในหน้ากำหนด Planogram';
-}).catch(() => { document.querySelector('#planogramStatus').textContent = 'โหลดแผนไม่ได้ ตรวจสอบ AI service แล้วโหลดหน้าใหม่'; });
+fetch(`${API_BASE}/planogram.php`)
+  .then(async (response) => {
+    const payload = await readJsonResponse(response);
+    if (!response.ok || !payload.success) throw new Error(payload.message);
+    if (payload.data) {
+      const option = document.createElement("option");
+      option.value = payload.data.id;
+      option.textContent = payload.data.name;
+      planogramSelect.append(option);
+      document.querySelector("#planogramStatus").textContent =
+        "เลือกแผนที่ตรงกับชั้นวางและมุมกล้องของภาพ";
+    } else
+      document.querySelector("#planogramStatus").textContent =
+        "ยังไม่มีแผน กรุณาบันทึกในหน้ากำหนด Planogram";
+  })
+  .catch(() => {
+    document.querySelector("#planogramStatus").textContent =
+      "โหลดแผนไม่ได้ ตรวจสอบ AI service แล้วโหลดหน้าใหม่";
+  });

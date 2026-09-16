@@ -47,11 +47,13 @@ class PlanogramTests(unittest.TestCase):
         self.assertTrue(frame[50, 15].any())
         self.assertFalse(frame[40, 40].any())
 
-    def test_product_center_resolves_border_overlap(self):
+    def test_product_match_uses_overlap_without_center_fallback(self):
         box = (10, 0, 30, 80)
         self.assertIsNone(match_gap(box, self.plan, 100, 100)['product_class'])
-        self.assertEqual(match_product(box, self.plan, 100, 100)['product_class'], 'product-a')
-        self.assertIsNone(match_product((10, 40, 30, 60), self.plan, 100, 100)['product_class'])
+        self.assertIsNone(match_product(box, self.plan, 100, 100)['expected_class'])
+        self.assertEqual(match_product(box, self.plan, 100, 100)['association_method'], 'outside-planogram')
+        self.assertEqual(match_product((10, 10, 30, 30), self.plan, 100, 100)['expected_class'], 'product-a')
+        self.assertIsNone(match_product((10, 40, 30, 60), self.plan, 100, 100)['expected_class'])
 
     def test_validation(self):
         for key, value in [('product', 'unknown'), ('target', -1), ('points', [[0, 0], [1, 1], [1, 0], [0, 1]])]:
@@ -103,22 +105,28 @@ class PlanogramTests(unittest.TestCase):
             source = Path(directory) / 'source.jpg'
             result = Path(directory) / 'result.jpg'
             cv2.imwrite(str(source), self.frame)
-            for plan, expected in [(self.plan, 'product-a'), (None, None)]:
+            for plan, expected in [(self.plan, []), (None, [None])]:
                 with patch.object(service, '_models', return_value=(model, model)), patch.object(service, '_collect', side_effect=[[product], [gap]]):
                     payload = service.detect_scene(source, result, .5, .5, plan)
-                    self.assertEqual(payload['gaps'][0]['product_class'], expected)
-                    self.assertEqual(payload['identified_gaps'], int(expected is not None))
+                    self.assertEqual([item['product_class'] for item in payload['gaps']], expected)
+                    self.assertEqual(payload['total_gaps'], len(expected))
+                    self.assertEqual(payload['identified_gaps'], 0)
                     self.assertEqual(payload['products'][0]['placement_status'], 'wrong-shelf' if plan else 'unmatched')
                     self.assertEqual(payload['wrong_shelf_count'], int(plan is not None))
                     self.assertIsNotNone(cv2.imread(str(result)))
             for class_name, box, expected_status in [
                 ('product-a', (10, 10, 30, 30), 'correct'),
                 ('product-b', (10, 10, 30, 30), 'wrong-shelf'),
+                ('fanta', (10, 10, 30, 30), 'wrong-shelf'),
                 ('product-a', (10, 40, 30, 60), 'unmatched'),
             ]:
                 item = dict(product, class_name=class_name, box=box)
                 with patch.object(service, '_models', return_value=(model, model)), patch.object(service, '_collect', side_effect=[[item], []]):
                     payload = service.detect_scene(source, result, .5, .5, self.plan)
+                    self.assertEqual(payload['products'][0]['class_name'], class_name)
+                    if class_name == 'fanta':
+                        self.assertEqual(payload['products'][0]['expected_class'], 'product-a')
+                        self.assertEqual(payload['product_counts'], {'fanta': 1})
                     self.assertEqual(payload['products'][0]['placement_status'], expected_status)
                     self.assertEqual(payload['total_gaps'], 0)
             wrong_ratio = dict(self.plan, ratio=2)
@@ -147,6 +155,27 @@ class PlanogramTests(unittest.TestCase):
                              ['GAP -> product-a', 'GAP -> product-b'])
             self.assertEqual([call.kwargs['plan_points'] for call in draw.call_args_list],
                              [shelf['points'] for shelf in self.plan['shelves']])
+
+    def test_occupied_region_suppresses_only_its_split_gap(self):
+        service = ShelfModelService(Path('unused'), Path('unused'))
+        model = Mock(names={0: 'gap'})
+        model.predict.return_value = [Mock()]
+        product = {'class_name': 'product-a', 'confidence': .9, 'box': (10, 10, 30, 30)}
+        gap = {'class_name': 'gap', 'confidence': .8, 'box': (10, 40, 30, 60)}
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'source.jpg'
+            result = Path(directory) / 'result.jpg'
+            cv2.imwrite(str(source), self.frame)
+            with patch.object(service, '_models', return_value=(model, model)), \
+                 patch.object(service, '_collect', side_effect=[[product], [gap]]), \
+                 patch.object(service, '_draw_box') as draw:
+                payload = service.detect_scene(source, result, .5, .5, self.plan)
+        self.assertEqual(payload['total_gaps'], 1)
+        self.assertEqual(payload['identified_gaps'], 1)
+        self.assertEqual(payload['gaps'][0]['product_class'], 'product-b')
+        self.assertEqual(payload['gaps'][0]['gap_number'], 1)
+        self.assertEqual([call.args[-1] for call in draw.call_args_list],
+                         ['product-a', 'GAP -> product-b'])
 
     def test_products_share_one_plan_outline_but_keep_model_boxes(self):
         service = ShelfModelService(Path('unused'), Path('unused'))
