@@ -447,9 +447,10 @@ $("addShelf").onclick = () => {
   activeId = null;
   editingId = null;
   draft = [];
-  plan.shelves.push(newShelf(`ชั้น ${plan.shelves.length + 1}`));
+  plan.shelves.unshift(newShelf(`ชั้น ${plan.shelves.length + 1}`));
   changed();
   renderShelves();
+  draw();
 };
 $("planName").oninput = () => {
   plan.name = $("planName").value;

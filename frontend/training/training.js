@@ -413,7 +413,7 @@ function renderDataset() {
     ? "เลือกคลาสเป้าหมายที่จะ Fine-tune"
     : targetImageCount < 4
       ? `คลาส ${targetClass} มีภาพติดป้าย ${targetImageCount}/4 ภาพ · ต้องมีอย่างน้อย 4 ภาพ`
-      : `${targetImageCount} ภาพของ ${targetClass} พร้อมฝึก · คลาสอื่นจะคงน้ำหนักเดิม`;
+      : `${targetImageCount} ภาพของ ${targetClass} พร้อมฝึก · รักษาโมเดลต้นทางและเสริมเฉพาะคลาสนี้`;
   $("startTraining").disabled = !targetClass || targetImageCount < 4
     || ["queued", "running"].includes(window.latestTrainingStatus);
 
@@ -469,6 +469,7 @@ $("refreshDataset").addEventListener("click", loadDataset);
 const jobLabels = {
   queued: "รอเริ่ม", running: "กำลังฝึก", completed: "ฝึกเสร็จแล้ว",
   activated: "เปิดใช้แล้ว", failed: "ฝึกไม่สำเร็จ", interrupted: "หยุดกลางคัน",
+  deleted: "ลบโมเดลแล้ว",
 };
 
 function renderJob(job) {
@@ -490,9 +491,18 @@ function renderJob(job) {
   $("jobProgress").classList.toggle("progress-bar-animated", ["queued", "running"].includes(job.status));
   $("jobMessage").textContent = job.message || "";
   const metricEntries = Object.entries(job.metrics || {}).slice(0, 8);
-  $("jobMetrics").textContent = metricEntries.length
-    ? `Validation: ${metricEntries.map(([key, value]) => `${key} ${value}`).join(" · ")}`
+  const comparison = job.comparison;
+  const baseline = job.baseline_metrics?.["target/mAP50-95"];
+  const candidate = job.metrics?.["target/mAP50-95"];
+  const scoreText = comparison
+    ? `mAP50–95 คลาสเป้าหมาย: เดิม ${baseline} → ใหม่ ${candidate} · Δ ${comparison.target_map_delta}`
     : "";
+  const warnings = job.dataset?.warnings || [];
+  $("jobMetrics").textContent = [
+    metricEntries.length
+      ? `${job.metrics_scope === "target_specialist" ? "Validation ตัวเสริม" : "Validation"}: ${metricEntries.map(([key, value]) => `${key} ${value}`).join(" · ")}` : "",
+    scoreText, ...warnings,
+  ].filter(Boolean).join(" · ");
   const targetClass = $("fineTuneClass").value;
   const targetImageCount = targetClass
     ? samples.filter((row) => (row.class_counts?.[targetClass] || 0) > 0).length
@@ -511,6 +521,7 @@ function renderModels(preferredId = "") {
   if (!availableModels.length) {
     select.append(new Option("ไม่พบโมเดล", ""));
     $("activateSelectedModel").disabled = true;
+    $("deleteSelectedModel").disabled = true;
     return;
   }
   availableModels.forEach((model) => {
@@ -526,6 +537,7 @@ function renderModels(preferredId = "") {
 function updateModelSelection() {
   const selected = availableModels.find((model) => model.id === $("modelSelect").value);
   $("activateSelectedModel").disabled = !selected || selected.current;
+  $("deleteSelectedModel").disabled = !selected || selected.current || !selected.deletable;
   if (selected) {
     $("modelMessage").textContent = selected.current
       ? "กำลังใช้โมเดลนี้อยู่ · " + selected.model_hash.slice(0, 12)
@@ -541,6 +553,7 @@ async function loadModels(preferredId = "") {
   } catch (error) {
     $("modelSelect").replaceChildren(new Option("โหลดรายการโมเดลไม่สำเร็จ", ""));
     $("activateSelectedModel").disabled = true;
+    $("deleteSelectedModel").disabled = true;
     $("modelMessage").textContent = error.message === "ไม่พบ endpoint ที่ร้องขอ"
       ? "AI service ยังไม่โหลด API เลือกโมเดล ให้หยุด service เดิมแล้วรัน python ai/app.py ใหม่"
       : error.message;
@@ -609,6 +622,36 @@ $("activateSelectedModel").addEventListener("click", async () => {
     $("modelMessage").textContent = error.message;
     $("modelMessage").className = "small text-danger mt-2 mb-0";
     button.disabled = false;
+  }
+});
+
+$("deleteSelectedModel").addEventListener("click", async () => {
+  const selected = availableModels.find((model) => model.id === $("modelSelect").value);
+  if (!selected || selected.current || !selected.deletable) return;
+  if (!confirm(`ลบ “${selected.label}” ถาวรหรือไม่? ไฟล์โมเดลและสำเนาที่เหมือนกันจะถูกลบ`)) return;
+  $("deleteSelectedModel").disabled = true;
+  $("activateSelectedModel").disabled = true;
+  $("modelSelect").disabled = true;
+  $("refreshModels").disabled = true;
+  $("modelMessage").textContent = "กำลังตรวจสอบและลบโมเดล…";
+  $("modelMessage").className = "small text-body-secondary mt-2 mb-0";
+  try {
+    const result = await requestJson(API + "?action=delete-model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model_id: selected.id }),
+    });
+    await loadModels();
+    await refreshJob();
+    $("modelMessage").textContent = result.message;
+    $("modelMessage").className = "small text-success mt-2 mb-0";
+  } catch (error) {
+    updateModelSelection();
+    $("modelMessage").textContent = error.message;
+    $("modelMessage").className = "small text-danger mt-2 mb-0";
+  } finally {
+    $("modelSelect").disabled = false;
+    $("refreshModels").disabled = false;
   }
 });
 

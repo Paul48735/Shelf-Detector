@@ -9,16 +9,15 @@ import re
 import shutil
 import threading
 import uuid
-from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
 import numpy as np
-import torch
 from ultralytics import YOLO
 from PIL import Image, UnidentifiedImageError
 
+from preservation import attach_preservation, ProductDetector, METADATA_KEY
 from config import MODEL_ARCHIVE_DIR, PRODUCT_MODEL_PATH, TRAINING_IMAGES_DIR, TRAINING_JOBS_DIR
 
 
@@ -229,6 +228,13 @@ class TrainingManager:
                     state = json.loads(job_file.read_text(encoding="utf-8"))
                     if state.get("id") != job_file.stem or not ID_PATTERN.fullmatch(str(state.get("id", ""))):
                         continue
+                    # Deleted jobs retain their place in the sequence so deleting
+                    # an older model never renames the models that remain.
+                    if state.get("status") == "deleted" and re.fullmatch(
+                        r"[a-f0-9]{64}", str(state.get("deleted_model_hash", ""))
+                    ):
+                        completed_jobs.append((str(state.get("created_at", "")), state["id"], None))
+                        continue
                     if state.get("status") not in {"completed", "activated"} or not state.get("candidate"):
                         continue
                     candidate = Path(state["candidate"]).resolve()
@@ -240,6 +246,8 @@ class TrainingManager:
                     LOGGER.exception("Skipping invalid training job model: %s", job_file.name)
             completed_jobs.sort(key=lambda row: (row[0], row[1]))
             for fine_tune_number, (_created, job_id, model_hash) in enumerate(completed_jobs, start=1):
+                if model_hash is None:
+                    continue
                 label = f"โมเดลที่ Fine-tune {fine_tune_number}"
                 if model_hash == active_hash:
                     models[0]["label"] = label
@@ -249,7 +257,7 @@ class TrainingManager:
                 seen_hashes.add(model_hash)
                 models.append({
                     "id": f"job:{job_id}", "label": label,
-                    "model_hash": model_hash, "current": False,
+                    "model_hash": model_hash, "current": False, "deletable": True,
                 })
 
             archive_files = sorted(
@@ -308,7 +316,7 @@ class TrainingManager:
                     "message": "โมเดลนี้กำลังใช้งานอยู่แล้ว",
                 }
 
-            candidate_model = YOLO(str(source))
+            candidate_model = ProductDetector(source, MODEL_ARCHIVE_DIR)
             candidate_names = [str(candidate_model.names[index]) for index in sorted(candidate_model.names)]
             if candidate_names != self.class_names():
                 raise ValueError("คลาสในโมเดลที่เลือกไม่ตรงกับโมเดลปัจจุบัน")
@@ -348,7 +356,52 @@ class TrainingManager:
                 "message": "เปิดใช้โมเดลที่เลือกแล้ว",
             }
 
-    def start(self, epochs=30, target_class=None):
+    def delete_model(self, model_id):
+        with self._lock:
+            if not isinstance(model_id, str) or not re.fullmatch(r"job:[a-f0-9]{32}", model_id):
+                raise ValueError("ลบได้เฉพาะโมเดลที่ Fine-tune และไม่ได้ใช้งานอยู่")
+            source, state = self._model_source(model_id)
+            selected_hash = self._file_hash(source)
+            if selected_hash == self._file_hash(PRODUCT_MODEL_PATH):
+                raise ValueError("ลบโมเดลที่กำลังใช้งานไม่ได้ กรุณาเปิดใช้โมเดลอื่นก่อน")
+            jobs = [json.loads(path.read_text(encoding="utf-8"))
+                    for path in TRAINING_JOBS_DIR.glob("*.json")]
+            if any(row.get("status") in {"queued", "running"} for row in jobs):
+                raise ValueError("รอให้การ Fine-tune เสร็จก่อนลบโมเดล")
+            job_dir = (TRAINING_JOBS_DIR / state["id"]).resolve()
+            if source.parent != job_dir / "runs" / "finetune" / "weights":
+                raise ValueError("ตำแหน่งไฟล์โมเดลของงานไม่ถูกต้อง")
+            # Check every retained checkpoint, including legacy archives whose
+            # dependencies may not be recorded in the job JSON.
+            checkpoints = {PRODUCT_MODEL_PATH.resolve()}
+            checkpoints.update(path.resolve() for path in MODEL_ARCHIVE_DIR.glob("*.pt"))
+            checkpoints.update(path.resolve() for path in TRAINING_JOBS_DIR.rglob("*.pt"))
+            aliases = {path for path in checkpoints if self._file_hash(path) == selected_hash}
+            for path in checkpoints - aliases:
+                model = YOLO(str(path))
+                metadata = (model.ckpt or {}).get(METADATA_KEY) or {}
+                if metadata.get("source_hash") == selected_hash:
+                    raise ValueError("ลบไม่ได้ โมเดลนี้เป็นต้นทางของโมเดลอื่นที่ยังเก็บอยู่")
+                del model
+            # Keep the job record and metrics; delete its model artifacts and
+            # identical backups so the deleted model does not reappear in the picker.
+            source.unlink()
+            for path in aliases - {source}:
+                if MODEL_ARCHIVE_DIR.resolve() in path.parents:
+                    path.unlink()
+            for row in jobs:
+                candidate = Path(row.get("candidate") or "").resolve()
+                if candidate == source or candidate in aliases:
+                    if candidate != source and candidate.is_file():
+                        candidate.unlink()
+                    row.update(status="deleted", candidate=None, deleted_model_hash=selected_hash,
+                               message="ลบโมเดลที่ Fine-tune แล้ว")
+                    self._write_job(row)
+            # The final-epoch checkpoint is not selectable and is no longer useful.
+            source.with_name("last.pt").unlink(missing_ok=True)
+            return {"model_id": model_id, "message": "ลบโมเดลที่ Fine-tune แล้ว"}
+
+    def start(self, epochs=60, target_class=None):
         if type(epochs) is not int or not 5 <= epochs <= 100:
             raise ValueError("จำนวน epochs ต้องอยู่ระหว่าง 5 ถึง 100")
         with self._lock:
@@ -403,47 +456,34 @@ class TrainingManager:
             data_yaml, target_class_ids, target_class_names = self._build_dataset(
                 job_dir, include_target_classes=True, target_class=target_class
             )
-            model = YOLO(str(PRODUCT_MODEL_PATH))
-            original_state = {
-                name: value.detach().cpu().clone()
-                for name, value in model.model.state_dict().items()
-            }
-            output_layers = self._class_output_layers(model.model)
-
-            def freeze_to_selected_classes(trainer):
-                layers = self._class_output_layers(trainer.model)
-                for parameter in trainer.model.parameters():
-                    parameter.requires_grad_(False)
-                for _name, layer in layers:
-                    if layer.out_channels != len(self.class_names()):
-                        raise RuntimeError("จำนวนช่องคลาสของหัวตรวจจับไม่ตรงกับโมเดล")
-                    for parameter in (layer.weight, layer.bias):
-                        if parameter is None:
-                            continue
-                        parameter.requires_grad_(True)
-                        mask = torch.zeros(
-                            parameter.shape[0], dtype=parameter.dtype, device=parameter.device
-                        )
-                        mask[target_class_ids] = 1
-                        mask = mask.reshape((-1,) + (1,) * (parameter.ndim - 1))
-                        parameter.register_hook(lambda gradient, grad_mask=mask: gradient * grad_mask)
-
-            def keep_batch_norm_frozen(trainer):
-                for module in trainer.model.modules():
-                    if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
-                        module.eval()
-
-            model.add_callback("on_pretrain_routine_end", freeze_to_selected_classes)
-            model.add_callback("on_train_batch_start", keep_batch_norm_frozen)
+            # Training and baseline must use the same source even if the user
+            # switches the active detector while the background job is running.
+            source_model = job_dir / "source.pt"
+            with self._lock:
+                shutil.copy2(PRODUCT_MODEL_PATH, source_model)
+            baseline_model = YOLO(str(source_model))
+            validation_args = dict(
+                data=str(data_yaml), imgsz=640, batch=4, workers=0,
+                plots=False, verbose=False, split="val", max_det=300,
+            )
+            baseline = self._evaluation_metrics(baseline_model.val(
+                **validation_args, project=str(job_dir / "evaluation"), name="baseline"
+            ), target_class_ids)
+            # Validation can fuse Conv/BatchNorm for inference. Reload unfused
+            # checkpoint weights so training retains its original BatchNorm state.
+            del baseline_model
+            model = YOLO(str(source_model))
             state = self._read_job(job_id)
             state.update({
-                "target_classes": target_class_names,
-                "message": "กำลังปรับเฉพาะคลาส " + ", ".join(target_class_names),
+                "target_classes": target_class_names, "baseline_metrics": baseline,
+                "training_strategy": "protected_target_adapter",
+                "dataset": json.loads((job_dir / "dataset_summary.json").read_text(encoding="utf-8")),
+                "message": "กำลังฝึกคลาสเป้าหมาย · เก็บโมเดลต้นทางเพื่อรักษาสินค้าคลาสอื่น",
             })
             self._write_job(state)
 
             def on_epoch_end(trainer):
-                current = int(trainer.epoch) + 1
+                current = min(epochs, int(trainer.epoch) + 1)
                 metrics = {}
                 for key, value in getattr(trainer, "metrics", {}).items():
                     try:
@@ -461,19 +501,43 @@ class TrainingManager:
             model.add_callback("on_fit_epoch_end", on_epoch_end)
             model.train(
                 data=str(data_yaml), epochs=epochs, imgsz=640, batch=4,
-                workers=0, patience=min(8, epochs), pretrained=True,
+                workers=0, patience=min(20, epochs), pretrained=True,
+                optimizer="AdamW", lr0=0.0001, lrf=0.1, cos_lr=True,
+                warmup_epochs=min(3, epochs / 5), warmup_bias_lr=0.0001,
+                weight_decay=0.0005, freeze=None, seed=2026, deterministic=True,
+                mosaic=0.3, close_mosaic=min(10, epochs // 5), mixup=0.0,
+                degrees=3.0, translate=0.05, scale=0.2,
+                fliplr=0.0, flipud=0.0, hsv_h=0.01, hsv_s=0.3, hsv_v=0.25,
                 project=str(job_dir / "runs"), name="finetune", exist_ok=True,
                 plots=False, save=True, verbose=False,
             )
             candidate = job_dir / "runs" / "finetune" / "weights" / "best.pt"
             if not candidate.is_file():
                 raise RuntimeError("การฝึกจบแล้วแต่ไม่พบไฟล์ best.pt")
-            self._keep_only_selected_class_changes(model, original_state, output_layers, target_class_ids, candidate)
+            preservation = attach_preservation(candidate, source_model, target_class_names, MODEL_ARCHIVE_DIR)
+            # Metrics below evaluate the specialist; deployed inference also uses
+            # the immutable source model to protect every non-target detection.
+            # Evaluate the actual saved best checkpoint, not the final epoch.
+            candidate_model = YOLO(str(candidate))
+            metrics = self._evaluation_metrics(candidate_model.val(
+                **validation_args, project=str(job_dir / "evaluation"), name="candidate"
+            ), target_class_ids)
+            target_delta = metrics["target/mAP50-95"] - baseline["target/mAP50-95"]
+            overall_delta = metrics["metrics/mAP50-95(B)"] - baseline["metrics/mAP50-95(B)"]
+            improved = target_delta > 0 and overall_delta >= -0.01
             state = self._read_job(job_id)
             state.update({
                 "status": "completed", "progress": 100, "updated_at": utc_now(),
-                "candidate": str(candidate),
-                "message": "ฝึกเสร็จ ปรับเฉพาะคลาส " + ", ".join(target_class_names) + " แล้ว · ตรวจ metrics ก่อนเปิดใช้",
+                "candidate": str(candidate), "metrics": metrics,
+                "source_model_hash": self._file_hash(source_model),
+                "preservation": preservation, "metrics_scope": "target_specialist",
+                "comparison": {
+                    "target_map_delta": round(target_delta, 5),
+                    "overall_map_delta": round(overall_delta, 5),
+                    "improved": improved,
+                },
+                "message": ("ฝึกเสร็จ · เก็บโมเดลเดิมและเสริมคลาสเป้าหมาย ตรวจผลก่อนเปิดใช้" if improved
+                            else "ฝึกเสร็จ · ยังไม่ยืนยันว่าดีกว่าโมเดลเดิม ควรเพิ่มข้อมูลและตรวจผลก่อนเปิดใช้"),
             })
             self._write_job(state)
         except Exception as exc:
@@ -489,55 +553,26 @@ class TrainingManager:
                 LOGGER.exception("Could not save failed training job state")
         finally:
             shutil.rmtree(TRAINING_JOBS_DIR / job_id / "dataset", ignore_errors=True)
+            (TRAINING_JOBS_DIR / job_id / "source.pt").unlink(missing_ok=True)
 
     @staticmethod
-    def _class_output_layers(model):
-        head = model.model[-1]
-        branches = getattr(head, "cv3", None)
-        if not branches:
-            raise RuntimeError("โมเดลนี้ไม่รองรับการ Fine-tune แยกตามคลาส")
-        module_names = {id(module): name for name, module in model.named_modules()}
-        layers = []
-        for branch in branches:
-            layer = branch[-1]
-            if not isinstance(layer, torch.nn.Conv2d):
-                raise RuntimeError("โครงสร้างหัวคลาสของโมเดลไม่รองรับการ Fine-tune แยกคลาส")
-            name = module_names.get(id(layer))
-            if not name or layer.bias is None:
-                raise RuntimeError("หาเลเยอร์ผลลัพธ์ของคลาสในโมเดลไม่พบ")
-            layers.append((name, layer))
-        return layers
-
-    def _keep_only_selected_class_changes(self, model, original_state, output_layers, target_class_ids, candidate):
-        trained_state = model.model.state_dict()
-        output_keys = {
-            f"{name}.{field}"
-            for name, _layer in output_layers
-            for field in ("weight", "bias")
-        }
-        merged_state = {}
-        for name, original in original_state.items():
-            if name not in trained_state:
-                raise RuntimeError(f"โครงสร้างโมเดลเปลี่ยนระหว่างฝึก: {name}")
-            restored = original.clone()
-            if name in output_keys:
-                trained = trained_state[name].detach().cpu()
-                if trained.shape != restored.shape:
-                    raise RuntimeError(f"ขนาดเลเยอร์คลาสเปลี่ยนระหว่างฝึก: {name}")
-                restored[target_class_ids] = trained[target_class_ids]
-            merged_state[name] = restored
-        model.model.load_state_dict(merged_state, strict=True)
-
-        # Ultralytics prefers the EMA entry when loading a checkpoint, so update both
-        # checkpoint model entries after restoring every non-target weight.
-        model.ckpt["ema"] = deepcopy(model.model).half()
-        model.ckpt["model"] = None
-        temporary = candidate.with_name(candidate.stem + ".selective.tmp.pt")
-        try:
-            model.save(temporary)
-            temporary.replace(candidate)
-        finally:
-            temporary.unlink(missing_ok=True)
+    def _evaluation_metrics(results, target_class_ids):
+        metrics = {}
+        for key, value in results.results_dict.items():
+            number = float(value)
+            if not math.isfinite(number):
+                raise RuntimeError("คะแนน validation ไม่ใช่ค่าที่วัดได้")
+            metrics[key] = round(number, 5)
+        # Ultralytics fills missing classes in maps with the overall score.
+        # A target with no evaluated detections must score zero, not that fallback.
+        evaluated_ids = {int(index) for index in results.box.ap_class_index}
+        metrics["target/mAP50-95"] = round(float(np.mean([
+            results.box.maps[index] if index in evaluated_ids else 0.0
+            for index in target_class_ids
+        ])), 5)
+        if not math.isfinite(metrics["target/mAP50-95"]):
+            raise RuntimeError("คะแนนคลาสเป้าหมายไม่ถูกต้อง")
+        return metrics
 
     def _build_dataset(self, job_dir, include_target_classes=False, target_class=None):
         with self._dataset_lock:
@@ -545,7 +580,7 @@ class TrainingManager:
             for path in TRAINING_IMAGES_DIR.glob("*.json"):
                 row = json.loads(path.read_text(encoding="utf-8"))
                 if row.get("annotations"):
-                    manifests.append(row)
+                    manifests.append({**row, "_revision_ns": path.stat().st_mtime_ns})
             manifests.sort(key=lambda row: row["id"])
             if len(manifests) < MIN_TRAINING_IMAGES:
                 raise ValueError(f"ต้องมีภาพที่ติดป้ายแล้วอย่างน้อย {MIN_TRAINING_IMAGES} ภาพ")
@@ -559,13 +594,50 @@ class TrainingManager:
             if any(name not in class_to_id for name in target_class_names):
                 raise ValueError("ไม่พบคลาสเป้าหมายในโมเดลปัจจุบัน")
             target_class_ids = sorted(class_to_id[name] for name in target_class_names)
-            random.Random(2026).shuffle(manifests)
-            validation_count = max(1, round(len(manifests) * 0.2))
-            validation_count = min(validation_count, len(manifests) - 1)
-            split_rows = {
-                "train": manifests[validation_count:],
-                "val": manifests[:validation_count],
+            # Group identical pixels before splitting. Repeated uploads can be
+            # revised labels or labels for different products in the same image.
+            groups = {}
+            duplicate_count = 0
+            for row in manifests:
+                source = TRAINING_IMAGES_DIR / row["filename"]
+                frame = cv2.imread(str(source))
+                if frame is None:
+                    raise ValueError(f"อ่านภาพ {row['filename']} ไม่ได้")
+                annotations = validate_annotations(row["annotations"], class_names)
+                digest = hashlib.sha256(str(frame.shape).encode() + frame.tobytes()).hexdigest()
+                if digest in groups:
+                    duplicate_count += 1
+                groups.setdefault(digest, []).append({**row, "annotations": annotations})
+            manifests = [self._merge_duplicate_labels(rows) for rows in groups.values()]
+            targets = [row for row in manifests if any(
+                item["class_name"] in target_class_names for item in row["annotations"]
+            )]
+            if len(targets) < MIN_TRAINING_IMAGES:
+                raise ValueError(f"ต้องมีภาพคลาสเป้าหมายที่ไม่ซ้ำกันอย่างน้อย {MIN_TRAINING_IMAGES} ภาพ")
+            split_rows = self._split_dataset(manifests, target_class_names)
+            summary = {
+                "unique_image_count": len(manifests), "duplicates_removed": duplicate_count,
+                "duplicate_policy": "latest_labels_per_class",
+                "splits": {split: {
+                    "image_count": len(rows),
+                    "class_image_counts": {name: sum(any(
+                        item["class_name"] == name for item in row["annotations"]
+                    ) for row in rows) for name in class_names},
+                } for split, rows in split_rows.items()},
+                "warnings": [],
             }
+            if len(targets) < 30:
+                summary["warnings"].append("ภาพเป้าหมายน้อยกว่า 30 ภาพ คะแนนอาจแปรปรวน ควรเพิ่มภาพจากหลายมุมและแสง")
+            missing = [name for name in class_names if not summary["splits"]["train"]["class_image_counts"][name]]
+            if missing:
+                summary["warnings"].append("ตัวเสริมไม่มีภาพฝึกของคลาส: " + ", ".join(missing) + " · ใช้โมเดลต้นทางตรวจคลาสอื่น")
+            unmeasured = [name for name in class_names if not summary["splits"]["val"]["class_image_counts"][name]]
+            if unmeasured:
+                summary["warnings"].append("ไม่มีภาพ validation ของคลาส: " + ", ".join(unmeasured))
+            summary["splits"]["train"]["image_ids"] = [row["id"] for row in split_rows["train"]]
+            summary["splits"]["val"]["image_ids"] = [row["id"] for row in split_rows["val"]]
+            job_dir.mkdir(parents=True, exist_ok=True)
+            self._atomic_json(job_dir / "dataset_summary.json", summary)
             dataset_root = job_dir / "dataset"
             for split, rows in split_rows.items():
                 image_dir = dataset_root / "images" / split
@@ -599,6 +671,81 @@ class TrainingManager:
             if include_target_classes:
                 return data_yaml, target_class_ids, target_class_names
             return data_yaml
+
+    @staticmethod
+    def _merge_duplicate_labels(rows):
+        # Treat the latest labeling of each class as its complete revision.
+        # Combine classes, but never accumulate slightly shifted boxes for the
+        # same product from successive uploads. Do not modify saved manifests.
+        ordered = sorted(rows, key=lambda row: (
+            row.get("updated_at", row.get("created_at", "")),
+            row.get("_revision_ns", 0),
+            row.get("created_at", ""), row["id"],
+        ))
+        by_class = {}
+        for row in ordered:
+            class_labels = {}
+            for item in row["annotations"]:
+                class_labels.setdefault(item["class_name"], []).append(item)
+            by_class.update(class_labels)
+        annotations = [item for name in sorted(by_class) for item in by_class[name]]
+        for index, item in enumerate(annotations):
+            for other in annotations[index + 1:]:
+                if item["class_name"] == other["class_name"]:
+                    continue
+                ax1, ay1, ax2, ay2 = item["box"]
+                bx1, by1, bx2, by2 = other["box"]
+                intersection = max(0, min(ax2, bx2) - max(ax1, bx1)) * max(0, min(ay2, by2) - max(ay1, by1))
+                union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - intersection
+                if union > 0 and intersection / union >= 0.8:
+                    image_ids = ", ".join(row["id"][:8] for row in ordered)
+                    raise ValueError(
+                        f"ภาพซ้ำ {image_ids} มีกรอบเดียวกันติดป้าย {item['class_name']} และ {other['class_name']} กรุณาแก้คลาสให้ตรงกัน"
+                    )
+        return {**ordered[-1], "annotations": annotations}
+
+    @staticmethod
+    def _split_dataset(manifests, target_class_names):
+        """Seeded multilabel split, retaining training examples of rare classes."""
+        rows = list(manifests)
+        random.Random(2026).shuffle(rows)
+        labels = {row["id"]: {item["class_name"] for item in row["annotations"]} for row in rows}
+        counts = {}
+        for names in labels.values():
+            for name in names:
+                counts[name] = counts.get(name, 0) + 1
+        remaining = dict(counts)
+        validation = []
+        covered = set()
+        desired = max(1, round(len(rows) * 0.2))
+        # Cover target and other classes with at least two independent images.
+        priorities = list(target_class_names) + sorted(counts, key=lambda name: counts[name])
+        for name in priorities:
+            if name in covered or counts.get(name, 0) < 2:
+                continue
+            candidates = [row for row in rows if row not in validation and name in labels[row["id"]]
+                          and all(remaining[item] > 1 for item in labels[row["id"]])]
+            if candidates:
+                chosen = max(candidates, key=lambda row: len(labels[row["id"]] - covered))
+                validation.append(chosen)
+                covered.update(labels[chosen["id"]])
+                for item in labels[chosen["id"]]:
+                    remaining[item] -= 1
+        for row in rows:
+            if len(validation) >= desired:
+                break
+            if row not in validation and all(remaining[name] > 1 for name in labels[row["id"]]):
+                validation.append(row)
+                for name in labels[row["id"]]:
+                    remaining[name] -= 1
+        if not validation or not set(target_class_names).issubset(
+            set().union(*(labels[row["id"]] for row in validation))
+        ):
+            raise ValueError("แบ่ง validation ที่มีคลาสเป้าหมายและเหลือภาพฝึกทุกคลาสไม่ได้ กรุณาเพิ่มภาพที่หลากหลาย")
+        train = [row for row in rows if row not in validation]
+        if not train:
+            raise ValueError("ไม่มีภาพเหลือสำหรับฝึก")
+        return {"train": train, "val": validation}
 
     def _job_path(self, job_id):
         if not isinstance(job_id, str) or not ID_PATTERN.fullmatch(job_id):

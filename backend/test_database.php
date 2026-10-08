@@ -33,6 +33,7 @@ try {
         'gaps'=>[['gap_number'=>1,'shelf_id'=>'upper','product_class'=>'test-a','confidence'=>.8,
             'association_method'=>'planogram','overlap_ratio'=>1,'box'=>[20,20,40,40]]]];
     $run = saveDetection($db, $result, $id);
+    verify($db->query('SELECT input_image_path FROM detection_runs WHERE id=' . $run)->fetchColumn() === 'storage/uploads/test.jpg', 'Input image path saved');
     verify((int)$db->query('SELECT COUNT(*) FROM detected_gaps')->fetchColumn() === 1, 'Gap saved');
     verify((int)$db->query('SELECT COUNT(*) FROM detected_products')->fetchColumn() === 1, 'Product saved');
     verify($db->query('SELECT placement_status FROM detected_products LIMIT 1')->fetchColumn() === 'wrong-shelf', 'Wrong shelf saved');

@@ -1,11 +1,30 @@
-storage/uploads/*
-storage/results/*
-storage/training/
-ai/models/archive/
-# Fine-tuned product model generated locally
-ai/models/bestProduct.pt
-__pycache__/
-*.pyc
+# Local uploads, results, planograms and training jobs
+/storage/
+
+# Generated model weights and Ultralytics runs
+# Models already tracked in Git remain tracked.
+/ai/models/*.pt
+/ai/models/archive/
+runs/
+
+# Python environments and caches
+.venv/
 venv/
-runs/detect/
-storage/planograms/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local configuration and logs
+.env
+.env.*
+!.env.example
+*.log
+
+# OS and editor temporary files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~

@@ -211,7 +211,7 @@ def get_training_job(job_id):
 def start_training_job():
     try:
         body = request.get_json(silent=True) or {}
-        state = training_manager.start(body.get("epochs", 30), body.get("target_class"))
+        state = training_manager.start(body.get("epochs", 60), body.get("target_class"))
         return jsonify({"success": True, "data": state}), 202
     except ValueError as exc:
         return error_response(str(exc), 400)
@@ -243,6 +243,19 @@ def activate_selected_model():
     except FileNotFoundError as exc:
         return error_response(str(exc), 404)
     except (OSError, ModelServiceError) as exc:
+        return error_response(str(exc), 500)
+
+
+@app.post("/training/models/delete")
+def delete_training_model():
+    try:
+        body = request.get_json(silent=True) or {}
+        return jsonify({"success": True, "data": training_manager.delete_model(body.get("model_id"))})
+    except ValueError as exc:
+        return error_response(str(exc), 400)
+    except FileNotFoundError as exc:
+        return error_response(str(exc), 404)
+    except OSError as exc:
         return error_response(str(exc), 500)
 
 

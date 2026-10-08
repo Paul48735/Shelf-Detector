@@ -72,13 +72,13 @@
               <span class="badge text-bg-primary">02</span>
               <div>
                 <h2 class="h5 mb-1">Fine-tune โมเดล</h2>
-                <p class="small text-body-secondary mb-0">เลือกคลาสเป้าหมายโดยตรง · ปรับเฉพาะคลาสนี้ คลาสอื่นคงน้ำหนักจากโมเดลต้นทาง</p>
+                <p class="small text-body-secondary mb-0">เลือกคลาสที่จะเสริม · ระบบเก็บโมเดลต้นทางไว้ตรวจสินค้าเดิม และใช้โมเดลที่ฝึกเพิ่มเฉพาะคลาสเป้าหมาย</p>
               </div>
             </div>
             <div class="row g-3 align-items-end">
               <div class="col-sm-4">
                 <label class="form-label fw-semibold" for="epochs">Epochs</label>
-                <input id="epochs" class="form-control" type="number" min="5" max="100" value="30">
+                <input id="epochs" class="form-control" type="number" min="5" max="100" value="60">
               </div>
               <div class="col-sm-8">
                 <label class="form-label fw-semibold" for="fineTuneClass">คลาสที่จะ Fine-tune</label>
@@ -114,6 +114,7 @@
                   <option value="">กำลังโหลดรายการโมเดล…</option>
                 </select>
                 <button id="activateSelectedModel" class="btn btn-outline-success" type="button" disabled>เปิดใช้โมเดลที่เลือก</button>
+                <button id="deleteSelectedModel" class="btn btn-outline-danger" type="button" disabled>ลบโมเดลที่ Fine-tune ที่เลือก</button>
               </div>
               <p id="modelMessage" class="small text-body-secondary mt-2 mb-0" role="status">กำลังโหลดรายการโมเดล…</p>
             </div>

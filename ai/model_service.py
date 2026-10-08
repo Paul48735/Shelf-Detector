@@ -4,6 +4,8 @@ import threading
 
 import cv2
 from ultralytics import YOLO
+from preservation import ProductDetector
+from config import MODEL_ARCHIVE_DIR
 from planogram import match_product, split_gap_by_plan
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
@@ -32,19 +34,23 @@ class ShelfModelService:
         except Exception as exc:
             raise ModelServiceError(f"โหลด {label} ไม่สำเร็จ: {exc}") from exc
 
+    def _load_product(self):
+        try:
+            return ProductDetector(self.product_model_path, MODEL_ARCHIVE_DIR)
+        except Exception as exc:
+            raise ModelServiceError(f"โหลด Product Model ไม่สำเร็จ: {exc}") from exc
+
     def _models(self):
         with self._model_lock:
             if self._product_model is None:
-                self._product_model = self._load(
-                    self.product_model_path, "Product Model"
-                )
+                self._product_model = self._load_product()
             if self._gap_model is None:
                 self._gap_model = self._load(self.gap_model_path, "Gap Model")
             return self._product_model, self._gap_model
 
     def reload_product_model(self):
         with self._model_lock:
-            self._product_model = self._load(self.product_model_path, "Product Model")
+            self._product_model = self._load_product()
 
     def class_names(self) -> list[str]:
         product_model, _ = self._models()
@@ -78,24 +84,12 @@ class ShelfModelService:
         return detections
 
     @staticmethod
-    def _draw_box(image, detection, color, label, plan_points=None):
+    def _draw_box(image, detection, color, label):
         scale = max(1.0, image.shape[1] / 1400)
-        if plan_points is None:
-            x1, y1, x2, y2 = map(int, detection["box"])
-            padding = round(14 * scale)
-            x1, y1 = max(0, x1 - padding), max(0, y1 - padding)
-            x2, y2 = min(image.shape[1] - 1, x2 + padding), min(image.shape[0] - 1, y2 + padding)
-            cv2.rectangle(image, (x1, y1), (x2, y2), color, max(4, round(5 * scale)))
-        else:
-            # Use the same four normalized corners as the Planogram editor.
-            polygon = np.array(plan_points, dtype=np.float32) * np.array(
-                [image.shape[1], image.shape[0]], dtype=np.float32
-            )
-            polygon = np.rint(polygon).astype(np.int32)
-            polygon[:, 0] = np.clip(polygon[:, 0], 0, image.shape[1] - 1)
-            polygon[:, 1] = np.clip(polygon[:, 1], 0, image.shape[0] - 1)
-            cv2.polylines(image, [polygon], True, color, max(4, round(5 * scale)))
-            x1, y1 = polygon.min(axis=0)
+        x1, y1, x2, y2 = map(int, detection["box"])
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(image.shape[1] - 1, x2), min(image.shape[0] - 1, y2)
+        cv2.rectangle(image, (x1, y1), (x2, y2), color, max(4, round(5 * scale)))
         if 'ผิด shelf' in label:
             font_path = Path('C:/Windows/Fonts/tahoma.ttf')
             if font_path.is_file():
@@ -159,11 +153,12 @@ class ShelfModelService:
             raise ValueError('สัดส่วนภาพไม่ตรงกับ Planogram กรุณาใช้ภาพจากมุมกล้องเดิม')
 
         try:
-            product_result = product_model.predict(
-                source=image,
-                conf=product_confidence,
-                verbose=False,
-            )[0]
+            if isinstance(product_model, ProductDetector):
+                products = product_model.predict_detections(image, product_confidence)
+            else:
+                products = self._collect(product_model.predict(
+                    source=image, conf=product_confidence, verbose=False,
+                )[0])
             gap_result = gap_model.predict(
                 source=image,
                 conf=gap_confidence,
@@ -173,14 +168,12 @@ class ShelfModelService:
         except Exception as exc:
             raise ModelServiceError(f"ประมวลผลภาพไม่สำเร็จ: {exc}") from exc
 
-        products = self._collect(product_result)
         raw_gaps = self._collect(gap_result)
         product_counts = dict(
             sorted(Counter(item["class_name"] for item in products).items())
         )
 
         annotated = image.copy()
-        regions = {shelf['id']: shelf for shelf in plan['shelves']} if plan else {}
         products_by_region = {}
         for product in products:
             association = match_product(product['box'], plan, image.shape[1], image.shape[0])
@@ -192,26 +185,22 @@ class ShelfModelService:
                            overlap_ratio=association.get('overlap_ratio'))
             if association['shelf_id'] is not None:
                 products_by_region.setdefault(association['shelf_id'], []).append(product)
-            else:
-                self._draw_box(annotated, product, (0, 190, 255),
-                               f"{product['class_name']} {product['confidence']:.2f}")
-
-        for region_id, region_products in products_by_region.items():
-            wrong = [item for item in region_products if item['placement_status'] == 'wrong-shelf']
-            representative = max(wrong or region_products, key=lambda item: item['confidence'])
-            if wrong:
-                label = (f"ผิด shelf | Found: {representative['class_name']}"
-                         f" | Expected: {representative['expected_class']}")
+            if status == 'wrong-shelf':
+                label = (f"ผิด shelf | Found: {product['class_name']} {product['confidence']:.2f}"
+                         f" | Expected: {expected}")
                 color = (0, 0, 230)
-            else:
-                label = representative['expected_class']
+            elif status == 'correct':
+                label = f"{product['class_name']} {product['confidence']:.2f}"
                 color = (41, 211, 163)
-            self._draw_box(annotated, representative, color, label,
-                           plan_points=regions[region_id]['points'])
+            else:
+                label = f"{product['class_name']} {product['confidence']:.2f}"
+                color = (0, 190, 255)
+            self._draw_box(annotated, product, color, label)
 
         gaps = []
-        drawn_gap_regions = set()
         for gap in raw_gaps:
+            product_names = []
+            visible = False
             for box, association in split_gap_by_plan(gap["box"], plan, image.shape[1], image.shape[0]):
                 # A detected product takes precedence over empty space in the same plan region.
                 if association['shelf_id'] in products_by_region:
@@ -224,11 +213,12 @@ class ShelfModelService:
                     "box": [round(value, 2) for value in box],
                 }
                 gaps.append(gap_data)
-                region_id = association['shelf_id']
-                if product_name is not None and region_id not in drawn_gap_regions:
-                    self._draw_box(annotated, {"box": box}, (0, 88, 255),
-                                   f"GAP -> {product_name}", plan_points=regions[region_id]['points'])
-                    drawn_gap_regions.add(region_id)
+                visible = True
+                if product_name is not None and product_name not in product_names:
+                    product_names.append(product_name)
+            if visible:
+                label = "GAP" + (" -> " + ", ".join(product_names) if product_names else "")
+                self._draw_box(annotated, gap, (0, 88, 255), label)
 
         result_path.parent.mkdir(parents=True, exist_ok=True)
         if not cv2.imwrite(str(result_path), annotated):

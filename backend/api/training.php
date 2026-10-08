@@ -126,13 +126,13 @@ try {
         trainingResponse($response, $status ?: 502);
     }
 
-    if ($method === 'POST' && $action === 'activate-model') {
+    if ($method === 'POST' && in_array($action, ['activate-model', 'delete-model'], true)) {
         $body = file_get_contents('php://input', false, null, 0, 16 * 1024 + 1);
         if ($body === false || strlen($body) > 16 * 1024) {
             trainingResponse(['success' => false, 'message' => 'คำขอไม่ถูกต้อง'], 413);
         }
         [$status, $response] = callAiService(
-            AI_SERVICE_URL . '/training/models/activate',
+            AI_SERVICE_URL . '/training/models/' . ($action === 'delete-model' ? 'delete' : 'activate'),
             [CURLOPT_POST => true, CURLOPT_POSTFIELDS => $body,
                 CURLOPT_HTTPHEADER => ['Content-Type: application/json']]
         );

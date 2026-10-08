@@ -36,16 +36,14 @@ class PlanogramTests(unittest.TestCase):
         self.plan['shelves'].append(copy.deepcopy(self.plan['shelves'][0]))
         self.assertEqual(match_gap([10, 10, 30, 30], self.plan, 100, 100)['association_method'], 'ambiguous-region')
 
-    def test_plan_outline_uses_four_saved_corners(self):
+    def test_draw_box_uses_original_detection_coordinates(self):
         frame = np.zeros((100, 100, 3), dtype=np.uint8)
-        points = [[.1, .1], [.8, .2], [.9, .8], [.2, .7]]
-        with patch('model_service.cv2.polylines', wraps=cv2.polylines) as outline:
+        with patch('model_service.cv2.rectangle', wraps=cv2.rectangle) as rectangle:
             ShelfModelService._draw_box(frame, {'box': (40, 40, 60, 60)},
-                                         (0, 88, 255), 'region', plan_points=points)
-        np.testing.assert_array_equal(outline.call_args.args[1][0],
-                                      np.array([[10, 10], [80, 20], [90, 80], [20, 70]]))
-        self.assertTrue(frame[50, 15].any())
-        self.assertFalse(frame[40, 40].any())
+                                         (0, 88, 255), 'product')
+        self.assertEqual(rectangle.call_args_list[0].args[1:3], ((40, 40), (60, 60)))
+        self.assertTrue(frame[50, 40].any())
+        self.assertFalse(frame[50, 26].any())
 
     def test_product_match_uses_overlap_without_center_fallback(self):
         box = (10, 0, 30, 80)
@@ -83,7 +81,14 @@ class PlanogramTests(unittest.TestCase):
             response = client.post('/planogram/validate', json=self.data)
             self.assertEqual(response.status_code, 200)
             saved = response.json['data']
+            self.assertNotIn('group_id', saved)
+            self.assertNotIn('view_name', saved)
             saved.pop('image')
+            response = client.post('/predict', data={
+                'image': (io.BytesIO(self.jpeg), 'test.jpg'),
+                'planogram': json.dumps(saved),
+            })
+            self.assertEqual(response.status_code, 400)
             response = client.post('/predict', data={'image': (io.BytesIO(self.jpeg), 'test.jpg'), 'planogram_id': 'stale'})
             self.assertEqual(response.status_code, 409)
             with patch.object(api, 'UPLOAD_DIR', Path(directory)), patch.object(api, 'RESULT_DIR', Path(directory)), patch.object(api.model_service, 'detect_scene', return_value={'gaps': []}) as detect, patch.object(api, 'model_version', return_value='hash'):
@@ -91,6 +96,9 @@ class PlanogramTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(detect.call_args.args[-1], saved)
                 self.assertIn('input_image_path', response.json)
+                self.assertNotIn('original_image_path', response.json)
+                self.assertNotIn('alignment', response.json)
+                self.assertTrue(Path(detect.call_args.args[0]).name in response.json['input_image_path'])
             saved['shelves'][0]['points'] = []
             response = client.post('/predict', data={'image': (io.BytesIO(self.jpeg), 'test.jpg'), 'planogram_id': saved['id'], 'planogram': json.dumps(saved)})
             self.assertEqual(response.status_code, 400)
@@ -132,6 +140,19 @@ class PlanogramTests(unittest.TestCase):
             wrong_ratio = dict(self.plan, ratio=2)
             with patch.object(service, '_models', return_value=(model, model)), self.assertRaises(ValueError):
                 service.detect_scene(source, result, .5, .5, wrong_ratio)
+    def test_unhandled_ai_errors_return_json_instead_of_html(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(api, 'UPLOAD_DIR', Path(directory)), \
+             patch.object(api, 'RESULT_DIR', Path(directory)), \
+             patch.object(api.model_service, 'detect_scene', side_effect=RuntimeError('test failure')):
+            response = api.app.test_client().post(
+                '/predict',
+                data={'image': (io.BytesIO(self.jpeg), 'test.jpg'), 'planogram': 'null'},
+                content_type='multipart/form-data',
+            )
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.mimetype, 'application/json')
+        self.assertFalse(response.json['success'])
 
     def test_detection_draws_and_returns_each_split_gap(self):
         service = ShelfModelService(Path('unused'), Path('unused'))
@@ -150,11 +171,11 @@ class PlanogramTests(unittest.TestCase):
             self.assertEqual(payload['identified_gaps'], 2)
             self.assertEqual([item['product_class'] for item in payload['gaps']], ['product-a', 'product-b'])
             self.assertEqual([item['gap_number'] for item in payload['gaps']], [1, 2])
-            self.assertEqual(draw.call_count, 2)
+            self.assertEqual(draw.call_count, 1)
             self.assertEqual([call.args[-1] for call in draw.call_args_list],
-                             ['GAP -> product-a', 'GAP -> product-b'])
-            self.assertEqual([call.kwargs['plan_points'] for call in draw.call_args_list],
-                             [shelf['points'] for shelf in self.plan['shelves']])
+                             ['GAP -> product-a, product-b'])
+            self.assertEqual(draw.call_args.args[1]['box'], raw_gap['box'])
+            self.assertFalse(draw.call_args.kwargs)
 
     def test_occupied_region_suppresses_only_its_split_gap(self):
         service = ShelfModelService(Path('unused'), Path('unused'))
@@ -175,9 +196,9 @@ class PlanogramTests(unittest.TestCase):
         self.assertEqual(payload['gaps'][0]['product_class'], 'product-b')
         self.assertEqual(payload['gaps'][0]['gap_number'], 1)
         self.assertEqual([call.args[-1] for call in draw.call_args_list],
-                         ['product-a', 'GAP -> product-b'])
+                         ['product-a 0.90', 'GAP -> product-b'])
 
-    def test_products_share_one_plan_outline_but_keep_model_boxes(self):
+    def test_products_in_same_plan_region_draw_individual_model_boxes(self):
         service = ShelfModelService(Path('unused'), Path('unused'))
         model = Mock(names={0: 'gap'})
         model.predict.return_value = [Mock()]
@@ -195,9 +216,12 @@ class PlanogramTests(unittest.TestCase):
                 payload = service.detect_scene(source, result, .5, .5, self.plan)
         self.assertEqual([item['box'] for item in payload['products']],
                          [[10, 10, 30, 30], [40, 10, 60, 30]])
-        self.assertEqual(draw.call_count, 1)
-        self.assertEqual(draw.call_args.kwargs['plan_points'], self.plan['shelves'][0]['points'])
-        self.assertEqual(draw.call_args.args[-1], 'product-a')
+        self.assertEqual(draw.call_count, 2)
+        self.assertEqual([call.args[1]['box'] for call in draw.call_args_list],
+                         [(10, 10, 30, 30), (40, 10, 60, 30)])
+        self.assertTrue(all(not call.kwargs for call in draw.call_args_list))
+        self.assertEqual([call.args[-1] for call in draw.call_args_list],
+                         ['product-a 0.90', 'product-a 0.80'])
 
 
 if __name__ == '__main__':
