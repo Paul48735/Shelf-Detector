@@ -1,9 +1,9 @@
--- MariaDB 10.4 (XAMPP). Import into a new/empty shelf_detection database.
+-- MariaDB 10.4 (XAMPP). Import into a new/empty shelf_detection_v2 database.
 -- This is a fresh schema, not a migration for existing tables.
 -- Store images as files; store their relative paths here.
-CREATE DATABASE IF NOT EXISTS shelf_detection
+CREATE DATABASE IF NOT EXISTS shelf_detection_v2
   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE shelf_detection;
+USE shelf_detection_v2;
 
 CREATE TABLE products (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

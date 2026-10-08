@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shelf Vision — Planogram</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
+  <link rel="stylesheet" href="../shared/styles.css">
+  <link rel="stylesheet" href="planogram.css">
+</head>
+<body class="bg-body-tertiary">
+  <main class="container-xxl py-4 py-lg-5">
+    <header class="bg-white border rounded-4 shadow-sm p-3 p-md-4 mb-4 d-flex align-items-center gap-3 flex-wrap">
+      <div>
+        <p class="small text-primary text-uppercase fw-semibold mb-1">Shelf Vision</p>
+        <h1 class="h3 mb-0">กำหนด Planogram</h1>
+      </div>
+      <nav class="nav nav-pills gap-1 ms-lg-auto" aria-label="เมนูหลัก">
+        <a class="nav-link" href="../dashboard/">ภาพรวม</a>
+        <a class="nav-link" href="../detect/">ตรวจจับสินค้า</a>
+        <a class="nav-link active" href="../planogram/" aria-current="page">Planogram</a>
+        <a class="nav-link" href="../training/">ชุดฝึก AI</a>
+      </nav>
+    </header>
+
+    <div class="workspace row g-4">
+      <div class="col-lg-5">
+        <section class="card border-0 shadow-sm h-100">
+          <div class="card-body p-4">
+            <h2 class="h5 mb-4">แผนผังชั้นวาง</h2>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" for="savedPlan">แผนที่บันทึกไว้</label>
+              <select id="savedPlan" class="form-select"><option value="">แผนใหม่</option></select>
+              <button id="newPlan" class="btn btn-outline-secondary btn-sm mt-2" type="button">＋ สร้างแผนใหม่</button>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" for="planName">ชื่อแผน</label>
+              <input id="planName" class="form-control" maxlength="100" value="ชั้นวาง 2 ชั้น">
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" for="referenceInput">ภาพอ้างอิง</label>
+              <input id="referenceInput" class="form-control" type="file" accept="image/jpeg,image/png,image/webp">
+              <div class="form-text">ภาพไม่เกิน 10 MB • เปลี่ยนภาพแล้วต้องวาดพื้นที่ใหม่</div>
+            </div>
+            <p id="classStatus" class="form-text" role="status">กำลังโหลดรายชื่อคลาสสินค้า…</p>
+            <button id="addShelf" class="btn btn-outline-primary mb-3" type="button">＋ เพิ่มพื้นที่ชั้น</button>
+            <div id="shelfList"></div>
+            <button id="savePlan" class="btn btn-primary w-100 mt-3" type="button">บันทึกแผน</button>
+            <p class="small text-body-secondary mt-3 mb-0">ใช้ภาพอ้างอิงมุมเดียวกันตอนตรวจ และวาดกรอบให้ตรงกับภาพนั้น ทุกครั้งที่บันทึกจะเก็บเป็นเวอร์ชันใหม่</p>
+            <p id="message" role="status" aria-live="polite" hidden></p>
+          </div>
+        </section>
+      </div>
+
+      <div class="col-lg-7">
+        <section class="card border-0 shadow-sm h-100">
+          <div class="card-body p-4">
+            <h2 class="h5 mb-2">กำหนดพื้นที่บนภาพ</h2>
+            <p id="drawHint" class="small text-body-secondary">เลือกภาพ แล้วกด “วาดพื้นที่” ของชั้นที่ต้องการ</p>
+            <div class="d-flex gap-2 mb-3">
+              <button id="undoPoint" class="btn btn-outline-secondary btn-sm" type="button" disabled>ย้อนจุดล่าสุด</button>
+              <button id="cancelDraw" class="btn btn-outline-secondary btn-sm" type="button" disabled>ยกเลิกการวาด</button>
+            </div>
+            <div id="referenceStage" class="bg-body-tertiary border rounded-3 overflow-hidden">
+              <p id="noImage" class="text-center text-body-secondary p-5 mb-0">ยังไม่มีภาพอ้างอิง</p>
+              <svg id="editor" xmlns="http://www.w3.org/2000/svg" hidden aria-label="คลิกมุมทั้งสี่ของพื้นที่ชั้นตามลำดับรอบกรอบ">
+                <image id="referenceImage" width="1000" height="1000" preserveAspectRatio="none"></image>
+                <g id="regions"></g>
+              </svg>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+  <script src="planogram.js"></script>
+</body>
+</html>

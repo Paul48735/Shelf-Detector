@@ -12,7 +12,8 @@ function loadPlan(PDO $db, ?string $id = null, bool $withImage = true): ?array
     $stmt->execute($id === null ? [] : [$id]);
     $row = $stmt->fetch();
     if (!$row) return null;
-    $plan = ['id' => $row['id'], 'version' => (int)$row['schema_version'], 'name' => $row['name'],
+    $plan = ['id' => $row['id'], 'version' => (int)$row['schema_version'],
+        'name' => $row['name'],
         'ratio' => $row['reference_width'] / $row['reference_height'],
         'overlap_threshold' => (float)$row['overlap_threshold'], 'shelves' => []];
     if ($withImage) {
@@ -31,7 +32,7 @@ function loadPlan(PDO $db, ?string $id = null, bool $withImage = true): ?array
     }
     return $plan;
 }
-    
+
 function catalogId(PDO $db, string $class): ?int
 {
     $stmt = $db->prepare('SELECT id FROM products WHERE yolo_class_name = ?');
@@ -89,6 +90,40 @@ function saveDetection(PDO $db, array $result, ?string $planId): int
         if ($db->inTransaction()) $db->rollBack();
         throw $error;
     }
+}
+
+function clearDetectionHistory(PDO $db, string $projectRoot): array
+{
+    $db->beginTransaction();
+    try {
+        $runs = $db->query('SELECT input_image_path, result_image_path FROM detection_runs')->fetchAll();
+        $deletedRuns = (int)$db->exec('DELETE FROM detection_runs');
+        $db->commit();
+    } catch (Throwable $error) {
+        if ($db->inTransaction()) $db->rollBack();
+        throw $error;
+    }
+
+    $deletedFiles = 0;
+    $failedFiles = 0;
+    $paths = [];
+    foreach ($runs as $run) {
+        $paths[$run['input_image_path']] = true;
+        $paths[$run['result_image_path']] = true;
+    }
+    foreach (array_keys($paths) as $relative) {
+        // Only files created for detection runs may be removed; planogram images stay intact.
+        if (!preg_match('~^storage/(uploads|results)/[a-f0-9]{32}\.(jpg|jpeg|png|webp)$~iD', $relative)) {
+            ++$failedFiles;
+            continue;
+        }
+        $path = $projectRoot . '/' . $relative;
+        if (!is_file($path)) continue;
+        if (@unlink($path)) ++$deletedFiles;
+        else ++$failedFiles;
+    }
+
+    return ['deleted_runs' => $deletedRuns, 'deleted_files' => $deletedFiles, 'failed_files' => $failedFiles];
 }
 
 function databaseApiError(Throwable $error): void

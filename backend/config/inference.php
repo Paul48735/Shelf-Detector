@@ -1,6 +1,6 @@
 <?php
 
-define('AI_SERVICE_URL', 'http://127.0.0.1:8000');
+define('AI_SERVICE_URL', 'http://127.0.0.1:8001');
 define('MAX_UPLOAD_SIZE', 10 * 1024 * 1024);
 define('ALLOWED_IMAGE_EXTENSIONS', ['jpg', 'jpeg', 'png', 'webp']);
 define('ALLOWED_IMAGE_MIME_TYPES', ['image/jpeg', 'image/png', 'image/webp']);

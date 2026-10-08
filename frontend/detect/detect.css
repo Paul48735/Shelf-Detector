@@ -1,0 +1,43 @@
+.drop-zone {
+  min-height: 11rem;
+  border: 2px dashed var(--bs-border-color);
+  cursor: pointer;
+  transition: border-color .15s, background-color .15s;
+}
+
+.drop-zone:hover,
+.drop-zone.dragging,
+.drop-zone:focus-within {
+  border-color: var(--bs-primary);
+  background-color: var(--bs-primary-bg-subtle) !important;
+}
+
+.drop-zone:focus-within {
+  outline: 2px solid var(--bs-primary);
+  outline-offset: 2px;
+}
+
+#fileName {
+  min-width: 0;
+}
+
+.image-stage {
+  display: grid;
+  place-items: center;
+  min-height: 34rem;
+  overflow: hidden;
+}
+
+.image-stage img {
+  width: 100%;
+  max-height: 680px;
+  object-fit: contain;
+}
+
+@media (max-width: 991.98px) {
+  .image-stage { min-height: 24rem; }
+}
+
+@media (max-width: 575.98px) {
+  .image-stage { min-height: 18rem; }
+}

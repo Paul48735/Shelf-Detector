@@ -1,15 +1,9 @@
 <?php
-/**
- * Database config — ค่าเดียวกับ webcam.py
- * Schema จริง:
- *   products(id, product_code, product_name, yolo_class_name, created_at, updated_at)
- *   shelves(id, shelf_code, shelf_name, created_at, updated_at)
- *   shelf_inventory(id, shelf_id, product_id, quantity, capacity, low_stock_threshold, last_detected_at, created_at, updated_at)
- */
+
 define('DB_HOST', '127.0.0.1');
 define('DB_USER', 'root');
-define('DB_PASS', '48735');
-define('DB_NAME', 'shelf_detection');
+define('DB_PASS', '');
+define('DB_NAME', 'shelf_detection_v2');
 define('DB_CHARSET', 'utf8mb4');
 
 define('JWT_SECRET', 'shelf_detection_secret_key_2026');

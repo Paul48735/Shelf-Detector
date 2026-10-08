@@ -1,0 +1,4 @@
+/* Keep HTML hidden states authoritative when Bootstrap display utilities are present. */
+[hidden] {
+  display: none !important;
+}
