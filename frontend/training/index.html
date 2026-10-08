@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="เพิ่มภาพตัวอย่าง ติดป้ายสินค้า และ Fine-tune โมเดลตรวจสินค้า">
+  <title>Shelf Vision — ชุดฝึก AI</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
+  <link rel="stylesheet" href="../shared/styles.css">
+  <link rel="stylesheet" href="training.css">
+</head>
+<body class="bg-body-tertiary">
+  <main class="container-xxl py-4 py-lg-5">
+    <header class="bg-white border rounded-4 shadow-sm p-3 p-md-4 mb-4 d-flex align-items-center gap-3 flex-wrap">
+      <div>
+        <p class="small text-primary text-uppercase fw-semibold mb-1">Shelf Vision</p>
+        <h1 class="h3 mb-0">ชุดฝึกโมเดลสินค้า</h1>
+      </div>
+      <nav class="nav nav-pills gap-1 ms-lg-auto" aria-label="เมนูหลัก">
+        <a class="nav-link" href="../dashboard/">ภาพรวม</a>
+        <a class="nav-link" href="../detect/">ตรวจจับสินค้า</a>
+        <a class="nav-link" href="../planogram/">Planogram</a>
+        <a class="nav-link active" href="./" aria-current="page">ชุดฝึก AI</a>
+      </nav>
+    </header>
+
+    <div class="alert alert-info" role="note">
+      เพิ่มภาพแพ็กเกจเก่าและใหม่ แล้ววาดกรอบสินค้าทุกชิ้นในภาพก่อนบันทึก ใช้คลาสเดิมเมื่อเป็นสินค้า/SKU เดิม
+      และใส่ตัวอย่างสินค้าอื่นร่วมด้วยเพื่อช่วยรักษาความแม่นยำเดิม
+    </div>
+
+    <div class="row g-4">
+      <div class="col-xl-7">
+        <section class="card border-0 shadow-sm mb-4">
+          <div class="card-body p-4">
+            <div class="d-flex align-items-start gap-3 mb-3">
+              <span class="badge text-bg-primary">01</span>
+              <div>
+                <h2 class="h5 mb-1">เพิ่มภาพและวาดกรอบ</h2>
+                <p class="small text-body-secondary mb-0">ลากเมาส์หรือแตะลากรอบให้ครอบสินค้าแต่ละชิ้น</p>
+              </div>
+            </div>
+            <label class="form-label fw-semibold" for="imageInput">ภาพสินค้า JPG, PNG หรือ WEBP</label>
+            <input id="imageInput" class="form-control" type="file" accept="image/jpeg,image/png,image/webp" multiple>
+            <p class="form-text mb-1">เลือก 1 ภาพเพื่อวาดกรอบทันที หรือเลือกหลายภาพเพื่ออัปโหลดเข้ารายการก่อนติดป้ายกำกับ</p>
+            <p id="bulkUploadMessage" class="small text-body-secondary mb-3" role="status">แต่ละภาพต้องมีขนาดไม่เกิน 10 MB</p>
+            <div id="canvasWrap" class="canvas-wrap bg-body-tertiary border rounded-3 mb-3" hidden>
+              <canvas id="imageCanvas" aria-label="พื้นที่วาดกรอบสินค้า"></canvas>
+            </div>
+            <div class="row g-2 align-items-end">
+              <div class="col-sm-8">
+                <label class="form-label fw-semibold" for="classSelect">คลาสสินค้าในกรอบถัดไป</label>
+                <select id="classSelect" class="form-select" disabled><option value="">กำลังโหลดคลาส…</option></select>
+              </div>
+              <div class="col-sm-4 d-grid">
+                <button id="undoBox" class="btn btn-outline-secondary" type="button" disabled>ลบกรอบล่าสุด</button>
+              </div>
+            </div>
+            <div id="annotationList" class="list-group mt-3"></div>
+            <div id="editorMessage" class="small text-body-secondary mt-2" role="status">เลือกภาพก่อนเริ่มวาดกรอบ</div>
+            <div class="d-flex flex-wrap gap-2 mt-3">
+              <button id="saveImage" class="btn btn-primary" type="button" disabled>บันทึกภาพและป้ายกำกับ</button>
+              <button id="skipImage" class="btn btn-outline-secondary" type="button" hidden>ข้ามภาพนี้</button>
+              <button id="cancelEdit" class="btn btn-outline-secondary" type="button" hidden>ยกเลิกแก้ไข</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="card border-0 shadow-sm">
+          <div class="card-body p-4">
+            <div class="d-flex align-items-start gap-3 mb-3">
+              <span class="badge text-bg-primary">02</span>
+              <div>
+                <h2 class="h5 mb-1">Fine-tune โมเดล</h2>
+                <p class="small text-body-secondary mb-0">เลือกคลาสเป้าหมายโดยตรง · ปรับเฉพาะคลาสนี้ คลาสอื่นคงน้ำหนักจากโมเดลต้นทาง</p>
+              </div>
+            </div>
+            <div class="row g-3 align-items-end">
+              <div class="col-sm-4">
+                <label class="form-label fw-semibold" for="epochs">Epochs</label>
+                <input id="epochs" class="form-control" type="number" min="5" max="100" value="30">
+              </div>
+              <div class="col-sm-8">
+                <label class="form-label fw-semibold" for="fineTuneClass">คลาสที่จะ Fine-tune</label>
+                <select id="fineTuneClass" class="form-select" disabled>
+                  <option value="">กำลังโหลดคลาส…</option>
+                </select>
+              </div>
+              <div class="col-12">
+                <button id="startTraining" class="btn btn-dark w-100" type="button">เริ่ม Fine-tune จากโมเดลปัจจุบัน</button>
+              </div>
+            </div>
+            <p id="trainingReadiness" class="form-text mt-2 mb-0">ต้องมีภาพที่ติดป้ายแล้วอย่างน้อย 4 ภาพ</p>
+            <p class="small text-body-secondary mt-2 mb-0">ติดป้ายสินค้ารอบข้างตามคลาสจริงเพื่อช่วยแยกสินค้าได้ คลาสเหล่านั้นจะไม่ถูก Fine-tune · ใช้โมเดลที่เปิดใช้อยู่เป็นต้นทาง หากต้องการกลับไปน้ำหนักเดิมให้เปิดใช้ “โมเดลเดิม” ก่อนเริ่มฝึก</p>
+            <div id="jobPanel" class="border rounded-3 p-3 mt-3" hidden aria-live="polite">
+              <div class="d-flex justify-content-between gap-3">
+                <strong id="jobStatus">ยังไม่มีงาน</strong>
+                <span id="jobProgressText" class="small text-body-secondary"></span>
+              </div>
+              <div class="progress mt-2" role="progressbar" aria-label="ความคืบหน้า Fine-tune" aria-valuemin="0" aria-valuemax="100">
+                <div id="jobProgress" class="progress-bar progress-bar-striped progress-bar-animated" style="width:0%"></div>
+              </div>
+              <p id="jobMessage" class="small text-body-secondary mt-2 mb-2"></p>
+              <div id="jobMetrics" class="small"></div>
+            </div>
+            <div class="model-picker border rounded-3 p-3 mt-3">
+              <div class="d-flex align-items-center justify-content-between gap-2 mb-1">
+                <h3 class="h6 mb-0">เลือกโมเดลที่ใช้ตรวจจับ</h3>
+                <button id="refreshModels" class="btn btn-outline-secondary btn-sm" type="button">รีเฟรช</button>
+              </div>
+              <p class="small text-body-secondary mb-2">เลือกโมเดลที่ฝึกไว้หรือโมเดลสำรอง แล้วกดเปิดใช้</p>
+              <div class="d-grid gap-2">
+                <select id="modelSelect" class="form-select" aria-label="เลือกโมเดลที่ใช้ตรวจจับ">
+                  <option value="">กำลังโหลดรายการโมเดล…</option>
+                </select>
+                <button id="activateSelectedModel" class="btn btn-outline-success" type="button" disabled>เปิดใช้โมเดลที่เลือก</button>
+              </div>
+              <p id="modelMessage" class="small text-body-secondary mt-2 mb-0" role="status">กำลังโหลดรายการโมเดล…</p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="col-xl-5">
+        <section class="card border-0 shadow-sm h-100">
+          <div class="card-body p-4">
+            <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+              <div>
+                <h2 class="h5 mb-1">ภาพในชุดฝึก</h2>
+                <p id="datasetSummary" class="small text-body-secondary mb-0">กำลังโหลดชุดฝึก…</p>
+              </div>
+              <button id="refreshDataset" class="btn btn-outline-secondary btn-sm" type="button">รีเฟรช</button>
+            </div>
+            <div id="classCoverage" class="coverage-list small mb-3"></div>
+            <div id="imageList" class="list-group"></div>
+            <p id="datasetMessage" class="small text-body-secondary mt-3 mb-0" role="status"></p>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+  <script src="training.js"></script>
+</body>
+</html>

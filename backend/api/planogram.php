@@ -10,7 +10,9 @@ try {
     $db = getDB();
     if ($method === 'GET') {
         if (isset($_GET['list'])) {
-            $rows = $db->query('SELECT id,name,created_at FROM planograms ORDER BY created_at DESC,id DESC LIMIT 100')->fetchAll();
+            $rows = $db->query(
+                'SELECT id,name,created_at FROM planograms ORDER BY created_at DESC,id DESC LIMIT 1000'
+            )->fetchAll();
             inferenceJsonResponse(['success' => true, 'data' => $rows]);
         }
         $plan = loadPlan($db, $_GET['id'] ?? null);

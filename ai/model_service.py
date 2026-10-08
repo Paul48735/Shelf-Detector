@@ -1,5 +1,6 @@
 from collections import Counter
 from pathlib import Path
+import threading
 
 import cv2
 from ultralytics import YOLO
@@ -20,6 +21,7 @@ class ShelfModelService:
         self.gap_model_path = Path(gap_model_path)
         self._product_model = None
         self._gap_model = None
+        self._model_lock = threading.RLock()
 
     @staticmethod
     def _load(path: Path, label: str):
@@ -31,13 +33,18 @@ class ShelfModelService:
             raise ModelServiceError(f"โหลด {label} ไม่สำเร็จ: {exc}") from exc
 
     def _models(self):
-        if self._product_model is None:
-            self._product_model = self._load(
-                self.product_model_path, "Product Model"
-            )
-        if self._gap_model is None:
-            self._gap_model = self._load(self.gap_model_path, "Gap Model")
-        return self._product_model, self._gap_model
+        with self._model_lock:
+            if self._product_model is None:
+                self._product_model = self._load(
+                    self.product_model_path, "Product Model"
+                )
+            if self._gap_model is None:
+                self._gap_model = self._load(self.gap_model_path, "Gap Model")
+            return self._product_model, self._gap_model
+
+    def reload_product_model(self):
+        with self._model_lock:
+            self._product_model = self._load(self.product_model_path, "Product Model")
 
     def class_names(self) -> list[str]:
         product_model, _ = self._models()

@@ -8,6 +8,10 @@ GAP_MODEL_PATH = PROJECT_ROOT / "ai" / "models" / "bestGap.pt"
 STORAGE_DIR = PROJECT_ROOT / "storage"
 UPLOAD_DIR = STORAGE_DIR / "uploads"
 RESULT_DIR = STORAGE_DIR / "results"
+TRAINING_DIR = STORAGE_DIR / "training"
+TRAINING_IMAGES_DIR = TRAINING_DIR / "images"
+TRAINING_JOBS_DIR = TRAINING_DIR / "jobs"
+MODEL_ARCHIVE_DIR = PROJECT_ROOT / "ai" / "models" / "archive"
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_FILE_SIZE = 10 * 1024 * 1024

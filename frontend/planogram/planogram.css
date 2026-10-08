@@ -8,3 +8,21 @@
 #editor.drawing {
   cursor: crosshair;
 }
+
+#editor.adjusting {
+  touch-action: none;
+}
+
+.corner-handle {
+  cursor: grab;
+  touch-action: none;
+}
+
+.corner-handle:active {
+  cursor: grabbing;
+}
+
+.corner-handle:focus {
+  outline: none;
+  filter: drop-shadow(0 0 5px #fff);
+}

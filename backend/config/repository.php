@@ -12,7 +12,8 @@ function loadPlan(PDO $db, ?string $id = null, bool $withImage = true): ?array
     $stmt->execute($id === null ? [] : [$id]);
     $row = $stmt->fetch();
     if (!$row) return null;
-    $plan = ['id' => $row['id'], 'version' => (int)$row['schema_version'], 'name' => $row['name'],
+    $plan = ['id' => $row['id'], 'version' => (int)$row['schema_version'],
+        'name' => $row['name'],
         'ratio' => $row['reference_width'] / $row['reference_height'],
         'overlap_threshold' => (float)$row['overlap_threshold'], 'shelves' => []];
     if ($withImage) {
@@ -31,7 +32,7 @@ function loadPlan(PDO $db, ?string $id = null, bool $withImage = true): ?array
     }
     return $plan;
 }
-    
+
 function catalogId(PDO $db, string $class): ?int
 {
     $stmt = $db->prepare('SELECT id FROM products WHERE yolo_class_name = ?');

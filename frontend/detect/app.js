@@ -17,15 +17,19 @@ const imageStage = document.querySelector("#imageStage");
 const imageCaption = document.querySelector("#imageCaption");
 const resultPanel = document.querySelector("#resultPanel");
 const planogramSelect = document.querySelector("#planogramSelect");
-
 let selectedFile = null;
 let previewUrl = null;
 
 async function readJsonResponse(response) {
   const raw = await response.text();
-  const jsonStart = raw.indexOf("{");
-  if (jsonStart < 0) throw new Error("เซิร์ฟเวอร์ส่งข้อมูลกลับมาไม่ถูกต้อง");
-  return JSON.parse(raw.slice(jsonStart));
+  try {
+    return JSON.parse(raw.replace(/^\uFEFF/, "").trim());
+  } catch {
+    const detail = raw.trimStart().startsWith("<")
+      ? "PHP API ส่งหน้า HTML กลับมาแทน JSON ตรวจ URL และ Apache/PHP error log"
+      : "เซิร์ฟเวอร์ส่งข้อมูลที่ไม่ใช่ JSON กลับมา";
+    throw new Error(`${detail} (HTTP ${response.status})`);
+  }
 }
 
 function setError(message = "") {
@@ -44,7 +48,7 @@ function setPreview(file) {
   previewImage.hidden = false;
   emptyState.hidden = true;
   imageStage.classList.remove("empty");
-  imageCaption.textContent = "ภาพต้นฉบับที่รอตรวจสอบ";
+  imageCaption.textContent = "ภาพที่รอตรวจสอบ";
 }
 
 function acceptFile(file) {
@@ -212,20 +216,24 @@ form.addEventListener("submit", async (event) => {
   submitButton.disabled = true;
   submitButton.querySelector(".button-label").hidden = true;
   submitButton.querySelector(".button-loading").hidden = false;
-  imageCaption.textContent = "Product Model และ Gap Model กำลังวิเคราะห์ภาพ...";
+  const planogramId = planogramSelect.value;
+  submitButton.querySelector(".button-loading").textContent = "AI กำลังตรวจภาพ...";
 
   try {
-    const extension = selectedFile.name.split(".").pop().toLowerCase();
+    imageCaption.textContent = "AI กำลังตรวจสินค้าและช่องว่าง...";
+    const body = new FormData();
+    body.append("image", selectedFile, selectedFile.name);
+    body.append("product_confidence", productConfidence.value);
+    body.append("gap_confidence", gapConfidence.value);
+    body.append("planogram_id", planogramId);
     const response = await fetch(`${API_BASE}/detect.php`, {
-      method: "PUT",
+      method: "POST",
       headers: {
-        "Content-Type": selectedFile.type,
-        "X-File-Extension": extension,
         "X-Product-Confidence": productConfidence.value,
         "X-Gap-Confidence": gapConfidence.value,
-        "X-Planogram-Id": planogramSelect.value,
+        "X-Planogram-Id": planogramId,
       },
-      body: selectedFile,
+      body,
     });
     const payload = await readJsonResponse(response);
     if (!response.ok || !payload.success)
@@ -243,17 +251,18 @@ form.addEventListener("submit", async (event) => {
 
 checkService();
 
-fetch(`${API_BASE}/planogram.php`)
+fetch(`${API_BASE}/planogram.php?list=1`)
   .then(async (response) => {
     const payload = await readJsonResponse(response);
     if (!response.ok || !payload.success) throw new Error(payload.message);
-    if (payload.data) {
-      const option = document.createElement("option");
-      option.value = payload.data.id;
-      option.textContent = payload.data.name;
-      planogramSelect.append(option);
+    const plans = payload.data || [];
+    if (plans.length) {
+      plans.forEach((item) => {
+        const savedAt = item.created_at ? item.created_at.replace("T", " ").slice(0, 19) : "";
+        planogramSelect.append(new Option(`${item.name} · ${savedAt} · ${item.id.slice(0, 8)}`, item.id));
+      });
       document.querySelector("#planogramStatus").textContent =
-        "เลือกแผนที่ตรงกับชั้นวางและมุมกล้องของภาพ";
+        "เลือกแผนที่สร้างจากภาพมุมเดียวกับภาพที่จะตรวจ";
     } else
       document.querySelector("#planogramStatus").textContent =
         "ยังไม่มีแผน กรุณาบันทึกในหน้ากำหนด Planogram";

@@ -11,31 +11,70 @@ if (!in_array(($_SERVER['REQUEST_METHOD'] ?? 'GET'), ['POST', 'PUT'], true)) {
 
 try {
     $db = getDB();
-    $planId = trim((string) ($_SERVER['HTTP_X_PLANOGRAM_ID'] ?? ''));
-    $plan = $planId === '' ? null : loadPlan($db, $planId, false);
-    if ($planId !== '' && !$plan) inferenceJsonResponse(['success' => false, 'message' => 'ไม่พบ Planogram'], 404);
-    // รับ binary image แล้วตรวจสอบก่อนส่งต่อให้ AI service
-    $imageBytes = @file_get_contents('php://input');
-    if ($imageBytes === false || $imageBytes === '') {
-        inferenceJsonResponse(['success' => false, 'message' => 'กรุณาเลือกไฟล์ภาพ'], 400);
+    $requestedPlanId = trim((string) ($_SERVER['HTTP_X_PLANOGRAM_ID'] ?? ''));
+    $plan = null;
+    if ($requestedPlanId !== '') {
+        if (!preg_match('/^[a-f0-9]{32}$/D', $requestedPlanId)) {
+            inferenceJsonResponse(['success' => false, 'message' => 'รหัส Planogram ไม่ถูกต้อง'], 400);
+        }
+        $plan = loadPlan($db, $requestedPlanId, false);
+        if ($plan === null) {
+            inferenceJsonResponse(['success' => false, 'message' => 'ไม่พบ Planogram'], 404);
+        }
     }
-    if (strlen($imageBytes) > MAX_UPLOAD_SIZE) {
-        inferenceJsonResponse(['success' => false, 'message' => 'ไฟล์ต้องมีขนาดไม่เกิน 10 MB'], 400);
-    }
+    $contentType = strtolower(explode(';', $_SERVER['CONTENT_TYPE'] ?? '')[0]);
+    $tempFiles = [];
+    $upload = static function (?array $file, string $label) {
+        if (!$file || !isset($file['error']) || $file['error'] !== UPLOAD_ERR_OK) {
+            throw new InvalidArgumentException($label . ': กรุณาเลือกไฟล์ภาพที่มีขนาดไม่เกิน 10 MB');
+        }
+        $size = (int) ($file['size'] ?? 0);
+        if ($size <= 0 || $size > MAX_UPLOAD_SIZE) {
+            throw new InvalidArgumentException($label . ': ไฟล์ต้องมีขนาดไม่เกิน 10 MB');
+        }
+        $extension = strtolower(pathinfo((string) ($file['name'] ?? ''), PATHINFO_EXTENSION));
+        $info = @getimagesize($file['tmp_name'] ?? '');
+        $mimeType = strtolower((string) ($info['mime'] ?? ''));
+        if (
+            !in_array($extension, ALLOWED_IMAGE_EXTENSIONS, true)
+            || !in_array($mimeType, ALLOWED_IMAGE_MIME_TYPES, true)
+        ) {
+            throw new InvalidArgumentException($label . ': รองรับเฉพาะไฟล์ JPG, JPEG, PNG และ WEBP');
+        }
+        return [$file['tmp_name'], $mimeType, $extension];
+    };
 
-    $extension = strtolower(trim($_SERVER['HTTP_X_FILE_EXTENSION'] ?? ''));
-    $mimeType = strtolower(trim(explode(';', $_SERVER['CONTENT_TYPE'] ?? '')[0]));
-    if (
-        !in_array($extension, ALLOWED_IMAGE_EXTENSIONS, true)
-        || !in_array($mimeType, ALLOWED_IMAGE_MIME_TYPES, true)
-    ) {
-        inferenceJsonResponse([
-            'success' => false,
-            'message' => 'รองรับเฉพาะไฟล์ JPG, JPEG, PNG และ WEBP',
-        ], 400);
-    }
-    if (@getimagesizefromstring($imageBytes) === false) {
-        inferenceJsonResponse(['success' => false, 'message' => 'ไฟล์ที่อัปโหลดไม่ใช่ภาพที่อ่านได้'], 400);
+    if ($contentType === 'multipart/form-data') {
+        [$imagePath, $mimeType, $extension] = $upload($_FILES['image'] ?? null, 'ภาพสำหรับตรวจ');
+    } else {
+        // รองรับไคลเอนต์เดิมที่ส่งภาพแบบ binary ตรงเข้ามา
+        $imageBytes = @file_get_contents('php://input');
+        if ($imageBytes === false || $imageBytes === '') {
+            inferenceJsonResponse(['success' => false, 'message' => 'กรุณาเลือกไฟล์ภาพ'], 400);
+        }
+        if (strlen($imageBytes) > MAX_UPLOAD_SIZE) {
+            inferenceJsonResponse(['success' => false, 'message' => 'ไฟล์ต้องมีขนาดไม่เกิน 10 MB'], 400);
+        }
+        $extension = strtolower(trim($_SERVER['HTTP_X_FILE_EXTENSION'] ?? ''));
+        $mimeType = strtolower(trim(explode(';', $_SERVER['CONTENT_TYPE'] ?? '')[0]));
+        if (
+            !in_array($extension, ALLOWED_IMAGE_EXTENSIONS, true)
+            || !in_array($mimeType, ALLOWED_IMAGE_MIME_TYPES, true)
+        ) {
+            inferenceJsonResponse([
+                'success' => false,
+                'message' => 'รองรับเฉพาะไฟล์ JPG, JPEG, PNG และ WEBP',
+            ], 400);
+        }
+        if (@getimagesizefromstring($imageBytes) === false) {
+            inferenceJsonResponse(['success' => false, 'message' => 'ไฟล์ที่อัปโหลดไม่ใช่ภาพที่อ่านได้'], 400);
+        }
+        $imagePath = tempnam(sys_get_temp_dir(), 'shelf_');
+        if ($imagePath === false) throw new RuntimeException('ไม่สามารถสร้างไฟล์ภาพชั่วคราวได้');
+        $tempFiles[] = $imagePath;
+        if (file_put_contents($imagePath, $imageBytes, LOCK_EX) !== strlen($imageBytes)) {
+            throw new RuntimeException('ไม่สามารถเตรียมไฟล์ภาพเพื่อส่งให้ AI service ได้');
+        }
     }
 
     $productConfidence = filter_var(
@@ -61,20 +100,13 @@ try {
         ], 400);
     }
 
-    // XAMPP ใช้ PHP 8.0 ซึ่งไม่มี CURLStringFile จึงใช้ CURLFile กับไฟล์ชั่วคราว
-    $tempImage = tempnam(sys_get_temp_dir(), 'shelf_');
-    if ($tempImage === false) {
-        throw new RuntimeException('ไม่สามารถสร้างไฟล์ภาพชั่วคราวได้');
-    }
+    // CURLFile ใช้ได้ทั้งไฟล์ multipart ชั่วคราวของ PHP และไฟล์ชั่วคราวของ binary API เดิม
     try {
-        if (file_put_contents($tempImage, $imageBytes, LOCK_EX) !== strlen($imageBytes)) {
-            throw new RuntimeException('ไม่สามารถเตรียมไฟล์ภาพเพื่อส่งให้ AI service ได้');
-        }
         $postFields = [
-            'image' => new CURLFile($tempImage, $mimeType, 'upload.' . $extension),
+            'image' => new CURLFile($imagePath, $mimeType, 'upload.' . $extension),
             'product_confidence' => (string) $productConfidence,
             'gap_confidence' => (string) $gapConfidence,
-            'planogram_id' => $planId,
+            'planogram_id' => $requestedPlanId,
             'planogram' => json_encode($plan, JSON_THROW_ON_ERROR),
         ];
         [$statusCode, $response] = callAiService(
@@ -82,10 +114,14 @@ try {
             [CURLOPT_POST => true, CURLOPT_POSTFIELDS => $postFields]
         );
     } finally {
-        @unlink($tempImage);
+        foreach ($tempFiles as $tempFile) @unlink($tempFile);
     }
     if ($statusCode === 200 && !empty($response['success'])) {
-        $response['detection_run_id'] = saveDetection($db, $response, $planId ?: null);
+        $resultPlanId = $response['planogram_id'] ?? null;
+        if ($resultPlanId !== ($requestedPlanId === '' ? null : $requestedPlanId)) {
+            inferenceJsonResponse(['success' => false, 'message' => 'ผลตรวจไม่ตรงกับ Planogram ที่เลือก'], 502);
+        }
+        $response['detection_run_id'] = saveDetection($db, $response, $requestedPlanId ?: null);
     }
     inferenceJsonResponse($response, $statusCode ?: 502);
 } catch (Throwable $error) {

@@ -20,6 +20,7 @@
         <a class="nav-link" href="../dashboard/">ภาพรวม</a>
         <a class="nav-link active" href="../detect/" aria-current="page">ตรวจจับสินค้า</a>
         <a class="nav-link" href="../planogram/">Planogram</a>
+        <a class="nav-link" href="../training/">ชุดฝึก AI</a>
       </nav>
       <div id="serviceStatus" class="service-status badge rounded-pill text-bg-light border d-inline-flex align-items-center gap-2" role="status">
         <span>กำลังเชื่อมต่อโมเดล</span>
@@ -39,9 +40,9 @@
             </div>
 
             <div class="mb-3">
-              <label class="form-label fw-semibold" for="planogramSelect">Planogram สำหรับระบุสินค้าในช่องว่าง</label>
+              <label class="form-label fw-semibold" for="planogramSelect">เลือก Planogram สำหรับภาพนี้</label>
               <select id="planogramSelect" class="form-select"><option value="">ไม่ใช้แผน — ไม่ระบุ class ของ gap</option></select>
-              <p id="planogramStatus" class="form-text">กำลังโหลดแผนจากหลังบ้าน…</p>
+              <p id="planogramStatus" class="form-text">เลือกแผนที่สร้างจากภาพมุมเดียวกับภาพที่จะตรวจ</p>
             </div>
 
             <div class="mb-3">
@@ -60,7 +61,7 @@
 
             <p class="form-label fw-semibold">ภาพสำหรับตรวจสอบ</p>
             <label id="dropZone" class="drop-zone bg-body-tertiary rounded-3 p-4 text-center d-flex flex-column align-items-center justify-content-center gap-2" for="imageInput">
-              <input id="imageInput" class="visually-hidden" type="file" accept="image/jpeg,image/png,image" required>
+              <input id="imageInput" class="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" required>
               <span class="display-5 text-primary" aria-hidden="true">＋</span>
               <strong>เลือกภาพ หรือลากไฟล์มาวาง</strong>
               <span class="small text-body-secondary">JPG, PNG หรือ WEBP — ไม่เกิน 10 MB</span>
@@ -73,7 +74,7 @@
             <div id="formError" class="alert alert-danger mt-3 mb-0" role="alert" hidden></div>
             <button id="submitButton" class="btn btn-primary w-100 py-3 mt-4" type="submit" disabled>
               <span class="button-label">ตรวจสอบภาพ</span>
-              <span class="button-loading" hidden>กำลังประมวลผล 2 โมเดล...</span>
+              <span class="button-loading" hidden>กำลังตรวจภาพ...</span>
             </button>
           </div>
         </form>
@@ -123,6 +124,7 @@
           <div class="col-md-6"><section class="card bg-body-tertiary border-0 h-100"><div class="card-body"><h3 class="h6 mb-3">สินค้าที่ตรวจพบ</h3><div id="productList" class="list-group"></div></div></section></div>
           <div class="col-md-6"><section class="card bg-body-tertiary border-0 h-100"><div class="card-body"><h3 class="h6 mb-3">การวิเคราะห์ช่องว่าง</h3><div id="gapList" class="list-group"></div></div></section></div>
         </div>
+
       </div>
     </section>
   </main>

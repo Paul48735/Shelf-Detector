@@ -16,7 +16,7 @@ function date(value) {
 function imageUrl(path) {
   if (
     typeof path !== "string" ||
-    !/^storage\/(results|uploads)\/[a-zA-Z0-9_.-]+$/.test(path)
+    !/^storage\/(results|uploads)\/[a-f0-9]{32}\.(jpg|jpeg|png|webp)$/i.test(path)
   )
     return null;
   return new URL(`../../${path}`, location.href).href;
@@ -37,6 +37,8 @@ function clearDetail() {
     "issueCount",
   ].forEach((id) => ($(id).textContent = "—"));
   $("runImage").hidden = true;
+  $("runImage").onload = null;
+  $("runImage").onerror = null;
   $("runImage").removeAttribute("src");
   $("fullImage").hidden = true;
   $("imageEmpty").hidden = false;
@@ -257,16 +259,16 @@ $("previous").onclick = () => {
   loadHistory();
 };
 get(`${API}/planogram.php?list=1`)
-  .then((plans) =>
+  .then((plans) => {
     plans.forEach((plan) => {
       const option = node(
         "option",
-        `${plan.name} · ${date(plan.created_at)} · ${plan.id.slice(-6)}`,
+        `${plan.name} · ${date(plan.created_at)} · ${plan.id.slice(0, 8)}`,
       );
       option.value = plan.id;
       $("planFilter").append(option);
-    }),
-  )
+    });
+  })
   .catch(() => {
     $("planFilter").disabled = true;
     $("planFilter").options[0].textContent = "โหลดตัวกรองแผนไม่ได้";

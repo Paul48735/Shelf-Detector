@@ -27,7 +27,8 @@ def validate_plan(data, classes):
     except Exception as exc:
         raise ValueError('ภาพอ้างอิงไม่ถูกต้อง') from exc
     cleaned = validate_regions(data, classes)
-    return {'version': 1, 'id': f'{time.time_ns():016x}' + uuid.uuid4().hex[16:], 'name': data['name'].strip(),
+    return {'version': 1, 'id': f'{time.time_ns():016x}' + uuid.uuid4().hex[16:],
+            'name': data['name'].strip(),
             'image': image, 'ratio': frame.shape[1] / frame.shape[0], 'shelves': cleaned}
 
 

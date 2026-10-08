@@ -19,6 +19,7 @@
         <a class="nav-link" href="../dashboard/">ภาพรวม</a>
         <a class="nav-link" href="../detect/">ตรวจจับสินค้า</a>
         <a class="nav-link active" href="../planogram/" aria-current="page">Planogram</a>
+        <a class="nav-link" href="../training/">ชุดฝึก AI</a>
       </nav>
     </header>
 
@@ -27,6 +28,11 @@
         <section class="card border-0 shadow-sm h-100">
           <div class="card-body p-4">
             <h2 class="h5 mb-4">แผนผังชั้นวาง</h2>
+            <div class="mb-3">
+              <label class="form-label fw-semibold" for="savedPlan">แผนที่บันทึกไว้</label>
+              <select id="savedPlan" class="form-select"><option value="">แผนใหม่</option></select>
+              <button id="newPlan" class="btn btn-outline-secondary btn-sm mt-2" type="button">＋ สร้างแผนใหม่</button>
+            </div>
             <div class="mb-3">
               <label class="form-label fw-semibold" for="planName">ชื่อแผน</label>
               <input id="planName" class="form-control" maxlength="100" value="ชั้นวาง 2 ชั้น">
@@ -40,7 +46,7 @@
             <p id="classStatus" class="form-text" role="status">กำลังโหลดรายชื่อคลาสสินค้า…</p>
             <button id="addShelf" class="btn btn-outline-primary" type="button">＋ เพิ่มพื้นที่ชั้น</button>
             <button id="savePlan" class="btn btn-primary w-100 mt-3" type="button">บันทึกแผน</button>
-            <p class="small text-body-secondary mt-3 mb-0">บันทึกแผนลงฐานข้อมูล แล้วเลือกแผนนี้ในหน้าตรวจจับ ภาพตรวจต้องใช้มุมกล้องเดียวกับภาพอ้างอิง ทุกครั้งที่บันทึกจะเก็บเป็นเวอร์ชันใหม่</p>
+            <p class="small text-body-secondary mt-3 mb-0">ใช้ภาพอ้างอิงมุมเดียวกันตอนตรวจ และวาดกรอบให้ตรงกับภาพนั้น ทุกครั้งที่บันทึกจะเก็บเป็นเวอร์ชันใหม่</p>
             <p id="message" role="status" aria-live="polite" hidden></p>
           </div>
         </section>

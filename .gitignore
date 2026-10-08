@@ -1,5 +1,7 @@
 storage/uploads/*
 storage/results/*
+storage/training/
+ai/models/archive/
 __pycache__/
 *.pyc
 venv/
