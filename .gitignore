@@ -2,6 +2,8 @@ storage/uploads/*
 storage/results/*
 storage/training/
 ai/models/archive/
+# Fine-tuned product model generated locally
+ai/models/bestProduct.pt
 __pycache__/
 *.pyc
 venv/
