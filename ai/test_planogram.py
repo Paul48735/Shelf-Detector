@@ -11,12 +11,17 @@ import cv2
 import numpy as np
 
 from planogram import match_gap, match_product, split_gap_by_plan, validate_plan
+from alignment import AlignmentError
 from model_service import ShelfModelService
 import app as api
 
 
 class PlanogramTests(unittest.TestCase):
     def setUp(self):
+        alignment_patch = patch('model_service.align_to_planogram',
+                                side_effect=lambda image, plan: (image, {'status': 'aligned', 'method': 'ecc_affine'}))
+        alignment_patch.start()
+        self.addCleanup(alignment_patch.stop)
         self.frame = np.zeros((100, 100, 3), dtype=np.uint8)
         self.jpeg = cv2.imencode('.jpg', self.frame)[1].tobytes()
         self.data = {'version': 1, 'name': 'Test', 'ratio': 1,
@@ -94,10 +99,10 @@ class PlanogramTests(unittest.TestCase):
             with patch.object(api, 'UPLOAD_DIR', Path(directory)), patch.object(api, 'RESULT_DIR', Path(directory)), patch.object(api.model_service, 'detect_scene', return_value={'gaps': []}) as detect, patch.object(api, 'model_version', return_value='hash'):
                 response = client.post('/predict', data={'image': (io.BytesIO(self.jpeg), 'test.jpg'), 'planogram_id': saved['id'], 'planogram': json.dumps(saved)})
                 self.assertEqual(response.status_code, 200)
-                self.assertEqual(detect.call_args.args[-1], saved)
+                self.assertEqual(detect.call_args.args[-2], saved)
+                self.assertIsNone(detect.call_args.args[-1])
                 self.assertIn('input_image_path', response.json)
                 self.assertNotIn('original_image_path', response.json)
-                self.assertNotIn('alignment', response.json)
                 self.assertTrue(Path(detect.call_args.args[0]).name in response.json['input_image_path'])
             saved['shelves'][0]['points'] = []
             response = client.post('/predict', data={'image': (io.BytesIO(self.jpeg), 'test.jpg'), 'planogram_id': saved['id'], 'planogram': json.dumps(saved)})
@@ -138,8 +143,54 @@ class PlanogramTests(unittest.TestCase):
                     self.assertEqual(payload['products'][0]['placement_status'], expected_status)
                     self.assertEqual(payload['total_gaps'], 0)
             wrong_ratio = dict(self.plan, ratio=2)
-            with patch.object(service, '_models', return_value=(model, model)), self.assertRaises(ValueError):
-                service.detect_scene(source, result, .5, .5, wrong_ratio)
+            with patch.object(service, '_models', return_value=(model, model)), \
+                 patch.object(service, '_collect', side_effect=[[], []]):
+                payload = service.detect_scene(source, result, .5, .5, wrong_ratio)
+            self.assertEqual(payload['alignment']['status'], 'aligned')
+
+    def test_perspective_image_reaches_both_models_only_when_selected(self):
+        service = ShelfModelService(Path('unused'), Path('unused'))
+        model = Mock(names={0: 'gap'})
+        model.predict.return_value = [Mock()]
+        corrected = np.full((80, 120, 3), 125, np.uint8)
+        corners = [[0, 0], [1, 0], [1, 1], [0, 1]]
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'source.jpg'
+            result = Path(directory) / 'result.jpg'
+            cv2.imwrite(str(source), self.frame)
+            with patch.object(service, '_models', return_value=(model, model)), \
+                 patch.object(service, '_collect', side_effect=[[], []]), \
+                 patch('model_service.correct_perspective', return_value=(
+                     corrected, {'status': 'aligned', 'method': 'perspective_four_corners'})) as warp:
+                payload = service.detect_scene(source, result, .5, .5, self.plan, corners)
+            warp.assert_called_once()
+            self.assertEqual(payload['alignment']['method'], 'perspective_four_corners')
+            self.assertEqual([call.kwargs['source'].shape for call in model.predict.call_args_list],
+                             [corrected.shape, corrected.shape])
+
+    def test_unaligned_image_reports_unverified_detections(self):
+        service = ShelfModelService(Path('unused'), Path('unused'))
+        model = Mock(names={0: 'gap'})
+        model.predict.return_value = [Mock()]
+        product = {'class_name': 'product-a', 'confidence': .9, 'box': (10, 10, 30, 30)}
+        gap = {'class_name': 'gap', 'confidence': .8, 'box': (40, 10, 60, 30)}
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'source.jpg'
+            result = Path(directory) / 'result.jpg'
+            cv2.imwrite(str(source), self.frame)
+            with patch.object(service, '_models', return_value=(model, model)), \
+                 patch.object(service, '_collect', side_effect=[[product], [gap]]), \
+                 patch('model_service.align_to_planogram', side_effect=AlignmentError('no match')):
+                payload = service.detect_scene(source, result, .5, .5, self.plan)
+        self.assertEqual(payload['alignment']['status'], 'failed')
+        self.assertEqual(payload['alignment']['reason'], 'no match')
+        self.assertEqual(payload['planogram_id'], self.plan['id'])
+        self.assertEqual(payload['total_products'], 1)
+        self.assertEqual(payload['products'][0]['placement_status'], 'unmatched')
+        self.assertIsNone(payload['products'][0]['expected_class'])
+        self.assertEqual(payload['wrong_shelf_count'], 0)
+        self.assertIsNone(payload['gaps'][0]['product_class'])
+        self.assertEqual(payload['identified_gaps'], 0)
     def test_unhandled_ai_errors_return_json_instead_of_html(self):
         with tempfile.TemporaryDirectory() as directory, \
              patch.object(api, 'UPLOAD_DIR', Path(directory)), \

@@ -12,13 +12,144 @@ const fileName = document.querySelector("#fileName");
 const submitButton = document.querySelector("#submitButton");
 const formError = document.querySelector("#formError");
 const previewImage = document.querySelector("#previewImage");
+const alignmentNotice = document.querySelector("#alignmentNotice");
 const emptyState = document.querySelector("#emptyState");
 const imageStage = document.querySelector("#imageStage");
 const imageCaption = document.querySelector("#imageCaption");
 const resultPanel = document.querySelector("#resultPanel");
 const planogramSelect = document.querySelector("#planogramSelect");
+const perspectiveEnabled = document.querySelector("#perspectiveEnabled");
+const perspectivePanel = document.querySelector("#perspectivePanel");
+const perspectiveStatus = document.querySelector("#perspectiveStatus");
+const perspectiveOriginal = document.querySelector("#perspectiveOriginal");
+const perspectiveCorrected = document.querySelector("#perspectiveCorrected");
+const noCorrectedImage = document.querySelector("#noCorrectedImage");
+const cornerOverlay = document.querySelector("#cornerOverlay");
+const confirmCorners = document.querySelector("#confirmCorners");
 let selectedFile = null;
 let previewUrl = null;
+let perspectiveCorners = [];
+let perspectiveReady = false;
+let manualDrawing = false;
+let perspectiveRevision = 0;
+
+function drawPerspectiveCorners() {
+  cornerOverlay.replaceChildren();
+  if (!perspectiveCorners.length) return;
+  const points = perspectiveCorners.map(([x, y]) => `${x * 1000},${y * 1000}`).join(" ");
+  const shape = document.createElementNS("http://www.w3.org/2000/svg",
+    perspectiveCorners.length === 4 ? "polygon" : "polyline");
+  shape.setAttribute("points", points);
+  shape.setAttribute("fill", perspectiveCorners.length === 4 ? "#0d6efd22" : "none");
+  shape.setAttribute("stroke", "#0d6efd");
+  shape.setAttribute("stroke-width", "5");
+  cornerOverlay.append(shape);
+  perspectiveCorners.forEach(([x, y], index) => {
+    const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    dot.setAttribute("cx", x * 1000);
+    dot.setAttribute("cy", y * 1000);
+    dot.setAttribute("r", "12");
+    dot.setAttribute("fill", "#0d6efd");
+    cornerOverlay.append(dot);
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("x", x * 1000 + 15);
+    label.setAttribute("y", y * 1000 - 12);
+    label.setAttribute("font-size", "32");
+    label.setAttribute("font-weight", "700");
+    label.textContent = String(index + 1);
+    cornerOverlay.append(label);
+  });
+}
+
+async function analyzePerspective(corners = null) {
+  if (!selectedFile || !planogramSelect.value || !perspectiveEnabled.checked) return;
+  const revision = ++perspectiveRevision;
+  perspectiveReady = false;
+  updateSubmitState();
+  perspectiveStatus.textContent = corners ? "กำลังปรับภาพจาก 4 มุมที่เลือก..." : "กำลังหามุมชั้นวางอัตโนมัติ...";
+  const body = new FormData();
+  body.append("image", selectedFile, selectedFile.name);
+  body.append("planogram_id", planogramSelect.value);
+  if (corners) body.append("corners", JSON.stringify(corners));
+  try {
+    const response = await fetch(`${API_BASE}/perspective.php`, { method: "POST", body });
+    const payload = await readJsonResponse(response);
+    if (revision !== perspectiveRevision) return;
+    if (!response.ok || !payload.success) throw new Error(payload.message || "ปรับภาพไม่สำเร็จ");
+    const analysis = payload.data;
+    perspectiveCorners = analysis.corners || [];
+    drawPerspectiveCorners();
+    perspectiveReady = analysis.status === "ready";
+    manualDrawing = false;
+    perspectiveCorrected.hidden = !analysis.corrected_image;
+    noCorrectedImage.hidden = !!analysis.corrected_image;
+    if (analysis.corrected_image) perspectiveCorrected.src = analysis.corrected_image;
+    confirmCorners.hidden = perspectiveReady || perspectiveCorners.length !== 4;
+    const score = analysis.method === "user_selected" ? "ผู้ใช้กำหนดจุด" :
+      `คะแนนกรอบ ${Math.round(analysis.confidence * 100)}% (เกณฑ์จากรูปทรง ไม่ใช่ความถูกต้องที่รับประกัน)`;
+    perspectiveStatus.textContent = perspectiveReady
+      ? `พบ 4 มุม (${score}) ตรวจภาพที่ปรับแล้วก่อนกดตรวจสอบ`
+      : `${analysis.reason || "กรุณาตรวจมุมที่เสนอ"} (${score})`;
+  } catch (error) {
+    if (revision !== perspectiveRevision) return;
+    perspectiveStatus.textContent = error.message;
+    perspectiveCorrected.hidden = true;
+    noCorrectedImage.hidden = false;
+  }
+  updateSubmitState();
+}
+
+function refreshPerspective() {
+  ++perspectiveRevision;
+  perspectiveReady = false;
+  perspectiveCorners = [];
+  manualDrawing = false;
+  drawPerspectiveCorners();
+  confirmCorners.hidden = true;
+  perspectiveCorrected.hidden = true;
+  noCorrectedImage.hidden = false;
+  perspectivePanel.hidden = !perspectiveEnabled.checked || !selectedFile;
+  if (!perspectivePanel.hidden) {
+    perspectiveOriginal.src = previewUrl;
+    if (planogramSelect.value) analyzePerspective();
+    else perspectiveStatus.textContent = "เลือก Planogram ก่อนปรับ perspective";
+  }
+  updateSubmitState();
+}
+
+perspectiveEnabled.addEventListener("change", refreshPerspective);
+planogramSelect.addEventListener("change", refreshPerspective);
+document.querySelector("#redrawCorners").addEventListener("click", () => {
+  manualDrawing = true;
+  perspectiveReady = false;
+  perspectiveCorners = [];
+  ++perspectiveRevision;
+  drawPerspectiveCorners();
+  confirmCorners.hidden = true;
+  perspectiveCorrected.hidden = true;
+  noCorrectedImage.hidden = false;
+  perspectiveStatus.textContent = "คลิกมุมชั้นวางบนภาพ: บนซ้าย → บนขวา → ล่างขวา → ล่างซ้าย (0/4)";
+  updateSubmitState();
+});
+document.querySelector("#undoCorner").addEventListener("click", () => {
+  manualDrawing = true;
+  perspectiveReady = false;
+  ++perspectiveRevision;
+  perspectiveCorners.pop();
+  drawPerspectiveCorners();
+  perspectiveStatus.textContent = `เลือกมุมแล้ว ${perspectiveCorners.length}/4`;
+  updateSubmitState();
+});
+cornerOverlay.addEventListener("click", (event) => {
+  if (!manualDrawing || perspectiveCorners.length >= 4) return;
+  const rect = cornerOverlay.getBoundingClientRect();
+  perspectiveCorners.push([(event.clientX - rect.left) / rect.width,
+    (event.clientY - rect.top) / rect.height]);
+  drawPerspectiveCorners();
+  perspectiveStatus.textContent = `เลือกมุมแล้ว ${perspectiveCorners.length}/4`;
+  if (perspectiveCorners.length === 4) analyzePerspective(perspectiveCorners);
+});
+confirmCorners.addEventListener("click", () => analyzePerspective(perspectiveCorners));
 
 async function readJsonResponse(response) {
   const raw = await response.text();
@@ -38,10 +169,12 @@ function setError(message = "") {
 }
 
 function updateSubmitState() {
-  submitButton.disabled = !selectedFile;
+  submitButton.disabled = !selectedFile ||
+    (perspectiveEnabled.checked && (!planogramSelect.value || !perspectiveReady));
 }
 
 function setPreview(file) {
+  alignmentNotice.hidden = true;
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = URL.createObjectURL(file);
   previewImage.src = previewUrl;
@@ -49,6 +182,7 @@ function setPreview(file) {
   emptyState.hidden = true;
   imageStage.classList.remove("empty");
   imageCaption.textContent = "ภาพที่รอตรวจสอบ";
+  refreshPerspective();
 }
 
 function acceptFile(file) {
@@ -67,6 +201,7 @@ function acceptFile(file) {
 }
 
 function clearFile() {
+  alignmentNotice.hidden = true;
   selectedFile = null;
   imageInput.value = "";
   fileInfo.hidden = true;
@@ -77,6 +212,7 @@ function clearFile() {
   resultPanel.hidden = true;
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = null;
+  refreshPerspective();
   updateSubmitState();
 }
 
@@ -138,6 +274,10 @@ function renderGaps(gaps) {
 }
 
 function showResult(payload) {
+  alignmentNotice.hidden = payload.alignment?.status !== "failed";
+  if (!alignmentNotice.hidden) {
+    alignmentNotice.textContent = `${payload.alignment.reason} · ตรวจได้เฉพาะสินค้าที่มองเห็น ยังไม่ตรวจถูก/ผิด shelf หรือระบุช่องว่างตาม Planogram`;
+  }
   document.querySelector("#totalProducts").textContent = payload.total_products;
   document.querySelector("#totalClasses").textContent = Object.keys(
     payload.product_counts,
@@ -159,6 +299,12 @@ function showResult(payload) {
   previewImage.alt = "ผลตรวจจับสินค้าและช่องว่าง";
   imageCaption.textContent = `พบสินค้า ${payload.total_products} ชิ้น · ผิด shelf ${payload.wrong_shelf_count || 0} ชิ้น · gap ที่ระบุได้ ${payload.identified_gaps} ตำแหน่ง`;
   resultPanel.hidden = false;
+  if (payload.alignment?.status === "aligned") {
+    const method = payload.alignment.method === "perspective_four_corners" ? "ปรับ perspective แล้ว" : "จัดแนวภาพด้วย ECC แล้ว";
+    imageCaption.textContent = `${method} · ${imageCaption.textContent}`;
+  } else if (payload.alignment?.status === "failed") {
+    imageCaption.textContent = `ยังจัดแนวภาพกับ Planogram ไม่ได้ · ${imageCaption.textContent}`;
+  }
   resultPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
@@ -212,6 +358,8 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
   setError();
   if (!selectedFile) return setError("กรุณาเลือกไฟล์ภาพ");
+  if (perspectiveEnabled.checked && !perspectiveReady)
+    return setError("กรุณาตรวจและยืนยัน 4 มุมของชั้นวางก่อนตรวจสอบ");
 
   submitButton.disabled = true;
   submitButton.querySelector(".button-label").hidden = true;
@@ -226,6 +374,8 @@ form.addEventListener("submit", async (event) => {
     body.append("product_confidence", productConfidence.value);
     body.append("gap_confidence", gapConfidence.value);
     body.append("planogram_id", planogramId);
+    if (perspectiveEnabled.checked)
+      body.append("perspective_corners", JSON.stringify(perspectiveCorners));
     const response = await fetch(`${API_BASE}/detect.php`, {
       method: "POST",
       headers: {
@@ -262,7 +412,7 @@ fetch(`${API_BASE}/planogram.php?list=1`)
         planogramSelect.append(new Option(`${item.name} · ${savedAt} · ${item.id.slice(0, 8)}`, item.id));
       });
       document.querySelector("#planogramStatus").textContent =
-        "เลือกแผนที่สร้างจากภาพมุมเดียวกับภาพที่จะตรวจ";
+        "เลือกแผนของชั้นวางเดียวกัน ระบบจะลองจัดแนวภาพอัตโนมัติด้วย ECC";
     } else
       document.querySelector("#planogramStatus").textContent =
         "ยังไม่มีแผน กรุณาบันทึกในหน้ากำหนด Planogram";

@@ -95,7 +95,7 @@ class TrainingTests(unittest.TestCase):
                     manager.save_image(upload, [{"class_name": "a", "box": [0.1, 0.1, 0.9, 0.9]}])
                 job_root = root / "jobs" / "dataset-test"
                 manager._build_dataset(job_root, target_class="a")
-                summary = json.loads((job_root / "dataset_summary.json").read_text())
+                summary = json.loads((job_root / "dataset_summary.json").read_text(encoding="utf-8"))
                 self.assertEqual(summary["unique_image_count"], 4)
                 self.assertEqual(summary["duplicates_removed"], 1)
                 images = list((job_root / "dataset/images").rglob("*.jpg"))

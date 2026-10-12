@@ -2,8 +2,8 @@
 
 define('DB_HOST', '127.0.0.1');
 define('DB_USER', 'root');
-define('DB_PASS', '');
-define('DB_NAME', 'shelf_detection_v2');
+define('DB_PASS', '48735');
+define('DB_NAME', 'shelf_detection');
 define('DB_CHARSET', 'utf8mb4');
 
 define('JWT_SECRET', 'shelf_detection_secret_key_2026');
