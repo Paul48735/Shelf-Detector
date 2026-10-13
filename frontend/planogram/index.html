@@ -40,13 +40,12 @@
             <div class="mb-3">
               <label class="form-label fw-semibold" for="referenceInput">ภาพอ้างอิง</label>
               <input id="referenceInput" class="form-control" type="file" accept="image/jpeg,image/png,image/webp">
-              <div class="form-text">ภาพไม่เกิน 10 MB • เปลี่ยนภาพแล้วต้องวาดพื้นที่ใหม่</div>
+              <div class="form-text">ภาพไม่เกิน 10 MB • เปลี่ยนภาพแล้วต้องวาดพื้นที่สินค้าใหม่</div>
             </div>
             <p id="classStatus" class="form-text" role="status">กำลังโหลดรายชื่อคลาสสินค้า…</p>
             <button id="addShelf" class="btn btn-outline-primary mb-3" type="button">＋ เพิ่มพื้นที่ชั้น</button>
             <div id="shelfList"></div>
             <button id="savePlan" class="btn btn-primary w-100 mt-3" type="button">บันทึกแผน</button>
-            <p class="small text-body-secondary mt-3 mb-0">ใช้ภาพชั้นวางที่เห็นโครงสร้างชัดเจนเป็นภาพอ้างอิง ระบบจะลองจัดแนวภาพตรวจด้วย ECC อัตโนมัติ ทุกครั้งที่บันทึกจะเก็บเป็นเวอร์ชันใหม่</p>
             <p id="message" role="status" aria-live="polite" hidden></p>
           </div>
         </section>
@@ -57,7 +56,7 @@
           <div class="card-body p-4">
             <h2 class="h5 mb-2">กำหนดพื้นที่บนภาพ</h2>
             <p id="drawHint" class="small text-body-secondary">เลือกภาพ แล้วกด “วาดพื้นที่” ของชั้นที่ต้องการ</p>
-            <div class="d-flex gap-2 mb-3">
+            <div class="d-flex gap-2 mb-3 flex-wrap">
               <button id="undoPoint" class="btn btn-outline-secondary btn-sm" type="button" disabled>ย้อนจุดล่าสุด</button>
               <button id="cancelDraw" class="btn btn-outline-secondary btn-sm" type="button" disabled>ยกเลิกการวาด</button>
             </div>
@@ -73,6 +72,6 @@
       </div>
     </div>
   </main>
-  <script src="planogram.js"></script>
+  <script src="planogram.js?v=20261013-no-alignment"></script>
 </body>
 </html>

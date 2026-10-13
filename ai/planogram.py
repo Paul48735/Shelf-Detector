@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 
 
+
 def text(value):
     return isinstance(value, str) and 0 < len(value.strip()) <= 100
 
@@ -29,7 +30,8 @@ def validate_plan(data, classes):
     cleaned = validate_regions(data, classes)
     return {'version': 1, 'id': f'{time.time_ns():016x}' + uuid.uuid4().hex[16:],
             'name': data['name'].strip(),
-            'image': image, 'ratio': frame.shape[1] / frame.shape[0], 'shelves': cleaned}
+            'image': image, 'ratio': frame.shape[1] / frame.shape[0],
+            'shelves': cleaned}
 
 
 def validate_regions(data, classes):

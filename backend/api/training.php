@@ -24,7 +24,7 @@ function trainingResponse(array $data, int $status = 200): void
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
     if (!trainingOriginAllowed()) trainingResponse(['success' => false, 'message' => 'Invalid origin'], 403);
-    header('Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS');
+    header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
     header('Access-Control-Allow-Headers: Content-Type');
     http_response_code(204);
     exit;
@@ -79,8 +79,9 @@ try {
                 throw new InvalidArgumentException('ข้อมูลกรอบสินค้าไม่ถูกต้อง');
             }
         }
+        $originalName = basename(str_replace('\\', '/', (string)$file['name']));
         $fields = [
-            'image' => new CURLFile($file['tmp_name'], $mime, 'training.' . $extension),
+            'image' => new CURLFile($file['tmp_name'], $mime, $originalName),
             'annotations' => $annotations,
         ];
         $aiPath = $action === 'pending-image' ? '/training/images/pending' : '/training/images';
@@ -100,6 +101,14 @@ try {
             AI_SERVICE_URL . '/training/images/' . rawurlencode($id),
             [CURLOPT_CUSTOMREQUEST => 'PUT', CURLOPT_POSTFIELDS => $body,
                 CURLOPT_HTTPHEADER => ['Content-Type: application/json']]
+        );
+        trainingResponse($response, $status ?: 502);
+    }
+
+    if ($method === 'DELETE' && $action === 'image' && $id !== '') {
+        [$status, $response] = callAiService(
+            AI_SERVICE_URL . '/training/images/' . rawurlencode($id),
+            [CURLOPT_CUSTOMREQUEST => 'DELETE']
         );
         trainingResponse($response, $status ?: 502);
     }

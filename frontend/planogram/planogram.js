@@ -333,10 +333,11 @@ function showImage() {
 $("editor").addEventListener("click", (event) => {
   if (!activeId || editingId || loadingImage) return;
   const rect = $("editor").getBoundingClientRect();
-  draft.push([
+  const point = [
     Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
     Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
-  ]);
+  ];
+  draft.push(point);
   if (draft.length === 4) {
     if (!validPoints(draft)) {
       draft.pop();

@@ -7,7 +7,7 @@
   <title>Shelf Vision — ตรวจสอบสินค้า</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
   <link rel="stylesheet" href="../shared/styles.css">
-  <link rel="stylesheet" href="detect.css?v=20261012-perspective">
+  <link rel="stylesheet" href="detect.css?v=20261013-no-alignment">
 </head>
 <body class="bg-body-tertiary">
   <main class="container-xxl py-4 py-lg-5">
@@ -42,14 +42,8 @@
             <div class="mb-3">
               <label class="form-label fw-semibold" for="planogramSelect">เลือก Planogram สำหรับภาพนี้</label>
               <select id="planogramSelect" class="form-select"><option value="">ไม่ใช้แผน — ไม่ระบุ class ของ gap</option></select>
-              <p id="planogramStatus" class="form-text">เลือกแผนของชั้นวางเดียวกัน ระบบจะลองจัดแนวภาพอัตโนมัติด้วย ECC</p>
+              <p id="planogramStatus" class="form-text">เลือกแผนของชั้นวางเดียวกันและถ่ายภาพให้มุมมองใกล้เคียงภาพอ้างอิง</p>
             </div>
-            <div class="form-check form-switch mb-3">
-              <input id="perspectiveEnabled" class="form-check-input" type="checkbox" role="switch">
-              <label class="form-check-label fw-semibold" for="perspectiveEnabled">ปรับ perspective ก่อนตรวจ (ทดลอง)</label>
-              <p class="form-text mb-0">ต้องเลือก Planogram ระบบจะเสนอ 4 มุมของชั้นวาง ตรวจและแก้ได้ก่อนส่งภาพเข้า YOLO</p>
-            </div>
-
             <div class="mb-3">
               <label class="form-label fw-semibold d-flex justify-content-between" for="productConfidence">
                 <span>Product confidence</span><output id="productConfidenceValue" for="productConfidence">0.50</output>
@@ -103,29 +97,6 @@
               </div>
               <img id="previewImage" class="img-fluid" alt="ภาพสำหรับตรวจสอบ" hidden>
             </div>
-            <div id="perspectivePanel" class="mt-3" hidden>
-              <p id="perspectiveStatus" class="small mb-2" role="status"></p>
-              <div class="d-flex gap-2 mb-3 flex-wrap">
-                <button id="redrawCorners" class="btn btn-outline-primary btn-sm" type="button">กำหนด 4 มุมเอง</button>
-                <button id="undoCorner" class="btn btn-outline-secondary btn-sm" type="button">ย้อนจุดล่าสุด</button>
-                <button id="confirmCorners" class="btn btn-outline-success btn-sm" type="button" hidden>ยืนยัน 4 มุมที่แสดง</button>
-              </div>
-              <div class="row g-3">
-                <div class="col-md-6">
-                  <p class="small fw-semibold mb-1">ภาพต้นฉบับ — คลิกมุม: บนซ้าย → บนขวา → ล่างขวา → ล่างซ้าย</p>
-                  <div id="perspectiveSource" class="perspective-source">
-                    <img id="perspectiveOriginal" alt="ภาพต้นฉบับสำหรับตรวจและแก้สี่มุมชั้นวาง">
-                    <svg id="cornerOverlay" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="ตำแหน่งสี่มุมชั้นวาง"></svg>
-                  </div>
-                </div>
-                <div class="col-md-6">
-                  <p class="small fw-semibold mb-1">ภาพที่ปรับมุมแล้ว</p>
-                  <img id="perspectiveCorrected" class="perspective-corrected" alt="ภาพที่ปรับมุมให้ตรงกับ Planogram" hidden>
-                  <p id="noCorrectedImage" class="small text-body-secondary">รอการตรวจหรือกำหนดมุม</p>
-                </div>
-              </div>
-            </div>
-            <p id="alignmentNotice" class="alert alert-warning mt-3 mb-0" role="status" hidden></p>
           </div>
         </section>
       </div>
@@ -156,6 +127,6 @@
       </div>
     </section>
   </main>
-  <script src="app.js?v=20261012-perspective"></script>
+  <script src="app.js?v=20261013-no-alignment"></script>
 </body>
 </html>

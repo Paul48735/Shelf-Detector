@@ -6,9 +6,6 @@ define('DB_PASS', '48735');
 define('DB_NAME', 'shelf_detection');
 define('DB_CHARSET', 'utf8mb4');
 
-define('JWT_SECRET', 'shelf_detection_secret_key_2026');
-define('JWT_EXPIRES', 86400);
-
 function getDB(): PDO
 {
     static $pdo = null;
@@ -62,91 +59,4 @@ function getJsonInput(): array
     }
     $data = json_decode($raw, true);
     return is_array($data) ? $data : [];
-}
-
-/** quantity / capacity / low_stock_threshold อยู่ที่ shelf_inventory */
-function calcStockStatus(int $qty, int $threshold, int $capacity): string
-{
-    if ($qty <= 0) {
-        return 'Out of Stock';
-    }
-    if ($qty <= $threshold) {
-        return 'Low Stock';
-    }
-    if ($qty >= $capacity) {
-        return 'Full';
-    }
-    return 'Normal';
-}
-
-function base64UrlEncode(string $data): string
-{
-    return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
-}
-
-function base64UrlDecode(string $data): string
-{
-    $pad = strlen($data) % 4;
-    if ($pad) {
-        $data .= str_repeat('=', 4 - $pad);
-    }
-    return base64_decode(strtr($data, '-_', '+/'));
-}
-
-function generateJwt(array $payload): string
-{
-    $header = ['typ' => 'JWT', 'alg' => 'HS256'];
-    $payload['iat'] = time();
-    $payload['exp'] = time() + JWT_EXPIRES;
-
-    $segments = [
-        base64UrlEncode(json_encode($header)),
-        base64UrlEncode(json_encode($payload)),
-    ];
-    $sig = base64UrlEncode(
-        hash_hmac('sha256', implode('.', $segments), JWT_SECRET, true)
-    );
-    $segments[] = $sig;
-
-    return implode('.', $segments);
-}
-
-function decodeJwt(string $token): ?array
-{
-    $parts = explode('.', $token);
-    if (count($parts) !== 3) {
-        return null;
-    }
-
-    [$headerB64, $payloadB64, $sigB64] = $parts;
-
-    $expectedSig = base64UrlEncode(
-        hash_hmac('sha256', $headerB64 . '.' . $payloadB64, JWT_SECRET, true)
-    );
-
-    if (!hash_equals($expectedSig, $sigB64)) {
-        return null;
-    }
-
-    $payload = json_decode(base64UrlDecode($payloadB64), true);
-    if (!is_array($payload) || empty($payload['exp']) || $payload['exp'] < time()) {
-        return null;
-    }
-
-    return $payload;
-}
-
-function requireAuth(): array
-{
-    $header = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
-    if (!preg_match('/^Bearer\s+(.+)$/i', $header, $m)) {
-        jsonResponse(['success' => false, 'message' => 'Authorization required'], 401);
-    }
-
-    $payload = decodeJwt(trim($m[1]));
-    if (!$payload) {
-        jsonResponse(['success' => false, 'message' => 'Invalid or expired token'], 401);
-    }
-
-    return $payload;
 }

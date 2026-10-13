@@ -4,8 +4,6 @@ import threading
 
 import cv2
 from ultralytics import YOLO
-from alignment import AlignmentError, align_to_planogram
-from perspective import correct_perspective
 from preservation import ProductDetector
 from config import MODEL_ARCHIVE_DIR
 from planogram import match_product, split_gap_by_plan
@@ -144,27 +142,12 @@ class ShelfModelService:
         product_confidence: float,
         gap_confidence: float,
         plan=None,
-        perspective_corners=None,
     ) -> dict:
         product_model, gap_model = self._models()
         gap_class_id = self._class_id(gap_model, "gap")
         image = cv2.imread(str(image_path))
         if image is None:
             raise ValueError("ไม่สามารถอ่านไฟล์ภาพที่อัปโหลดได้")
-
-        alignment = None
-        comparison_plan = plan
-        if plan:
-            try:
-                if perspective_corners is not None:
-                    image, alignment = correct_perspective(image, plan, perspective_corners)
-                else:
-                    image, alignment = align_to_planogram(image, plan)
-            except AlignmentError as exc:
-                if perspective_corners is not None:
-                    raise
-                comparison_plan = None
-                alignment = {"status": "failed", "reason": str(exc)}
 
         try:
             if isinstance(product_model, ProductDetector):
@@ -183,18 +166,6 @@ class ShelfModelService:
             raise ModelServiceError(f"ประมวลผลภาพไม่สำเร็จ: {exc}") from exc
 
         raw_gaps = self._collect(gap_result)
-        if alignment and alignment.get("valid_polygon"):
-            valid_area = np.asarray(alignment["valid_polygon"], dtype=np.float32)
-
-            def mostly_visible(detection):
-                x1, y1, x2, y2 = detection["box"]
-                rectangle = np.float32([[x1, y1], [x2, y1], [x2, y2], [x1, y2]])
-                area = max(0, x2 - x1) * max(0, y2 - y1)
-                overlap, _ = cv2.intersectConvexConvex(rectangle, valid_area)
-                return area > 0 and overlap / area >= .9
-
-            products = [item for item in products if mostly_visible(item)]
-            raw_gaps = [item for item in raw_gaps if mostly_visible(item)]
         product_counts = dict(
             sorted(Counter(item["class_name"] for item in products).items())
         )
@@ -202,7 +173,7 @@ class ShelfModelService:
         annotated = image.copy()
         products_by_region = {}
         for product in products:
-            association = match_product(product['box'], comparison_plan, image.shape[1], image.shape[0])
+            association = match_product(product['box'], plan, image.shape[1], image.shape[0])
             expected = association['expected_class']
             status = 'unmatched' if expected is None else ('correct' if product['class_name'] == expected else 'wrong-shelf')
             product.update(expected_class=expected, region_id=association['shelf_id'],
@@ -227,7 +198,7 @@ class ShelfModelService:
         for gap in raw_gaps:
             product_names = []
             visible = False
-            for box, association in split_gap_by_plan(gap["box"], comparison_plan, image.shape[1], image.shape[0]):
+            for box, association in split_gap_by_plan(gap["box"], plan, image.shape[1], image.shape[0]):
                 # A detected product takes precedence over empty space in the same plan region.
                 if association['shelf_id'] in products_by_region:
                     continue
@@ -252,7 +223,6 @@ class ShelfModelService:
 
         return {
             "planogram_id": plan["id"] if plan else None,
-            "alignment": alignment,
             "image_width": image.shape[1],
             "image_height": image.shape[0],
             "products": [

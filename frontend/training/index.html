@@ -72,7 +72,7 @@
               <span class="badge text-bg-primary">02</span>
               <div>
                 <h2 class="h5 mb-1">Fine-tune โมเดล</h2>
-                <p class="small text-body-secondary mb-0">เลือกคลาสที่จะเสริม · ระบบเก็บโมเดลต้นทางไว้ตรวจสินค้าเดิม และใช้โมเดลที่ฝึกเพิ่มเฉพาะคลาสเป้าหมาย</p>
+                <p class="small text-body-secondary mb-0">ฝึกทุกคลาสที่ติดป้ายในภาพชุดฝึกพร้อมกัน · ระบบเก็บโมเดลต้นทางไว้ตรวจคลาสที่ไม่มีภาพฝึก</p>
               </div>
             </div>
             <div class="row g-3 align-items-end">
@@ -81,17 +81,15 @@
                 <input id="epochs" class="form-control" type="number" min="5" max="100" value="60">
               </div>
               <div class="col-sm-8">
-                <label class="form-label fw-semibold" for="fineTuneClass">คลาสที่จะ Fine-tune</label>
-                <select id="fineTuneClass" class="form-select" disabled>
-                  <option value="">กำลังโหลดคลาส…</option>
-                </select>
+                <span class="form-label fw-semibold d-block">คลาสที่จะ Fine-tune</span>
+                <div id="trainingClasses" class="form-control bg-body-tertiary" aria-live="polite">กำลังโหลดภาพที่ติดป้าย…</div>
               </div>
               <div class="col-12">
                 <button id="startTraining" class="btn btn-dark w-100" type="button">เริ่ม Fine-tune จากโมเดลปัจจุบัน</button>
               </div>
             </div>
             <p id="trainingReadiness" class="form-text mt-2 mb-0">ต้องมีภาพที่ติดป้ายแล้วอย่างน้อย 4 ภาพ</p>
-            <p class="small text-body-secondary mt-2 mb-0">ติดป้ายสินค้ารอบข้างตามคลาสจริงเพื่อช่วยแยกสินค้าได้ คลาสเหล่านั้นจะไม่ถูก Fine-tune · ใช้โมเดลที่เปิดใช้อยู่เป็นต้นทาง หากต้องการกลับไปน้ำหนักเดิมให้เปิดใช้ “โมเดลเดิม” ก่อนเริ่มฝึก</p>
+            <p class="small text-body-secondary mt-2 mb-0">ติดป้ายสินค้าทุกชิ้นที่โมเดลรู้จักในแต่ละภาพ ทุกคลาสที่ติดป้ายจะร่วมฝึกในรอบเดียว · ใช้โมเดลที่เปิดใช้อยู่เป็นต้นทาง หากต้องการเริ่มจากน้ำหนักเดิมให้เปิดใช้ “โมเดลเดิม” ก่อนเริ่มฝึก</p>
             <div id="jobPanel" class="border rounded-3 p-3 mt-3" hidden aria-live="polite">
               <div class="d-flex justify-content-between gap-3">
                 <strong id="jobStatus">ยังไม่มีงาน</strong>

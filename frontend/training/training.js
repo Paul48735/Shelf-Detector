@@ -380,18 +380,6 @@ async function loadDataset() {
     select.value = classes.includes(selected) ? selected : "";
     select.disabled = classes.length === 0;
     samples = rows;
-    const targetSelect = $("fineTuneClass");
-    const previousTarget = targetSelect.value;
-    targetSelect.replaceChildren(new Option("เลือกคลาสเป้าหมาย", ""));
-    classes.forEach((name) => targetSelect.append(new Option(name, name)));
-    const labeledClasses = classes.filter((name) =>
-      samples.some((row) => (row.class_counts?.[name] || 0) > 0)
-    );
-    targetSelect.value = classes.includes(previousTarget)
-      ? previousTarget
-      : labeledClasses.length === 1 ? labeledClasses[0] : "";
-    targetSelect.disabled = classes.length === 0
-      || ["queued", "running"].includes(window.latestTrainingStatus);
     renderDataset();
     updateEditorState();
   } catch (error) {
@@ -404,17 +392,19 @@ function renderDataset() {
   const labeledCount = samples.filter((row) => row.annotation_count > 0).length;
   const pendingCount = samples.length - labeledCount;
   const totalBoxes = samples.reduce((sum, row) => sum + row.annotation_count, 0);
-  const targetClass = $("fineTuneClass").value;
-  const targetImageCount = targetClass
-    ? samples.filter((row) => (row.class_counts?.[targetClass] || 0) > 0).length
-    : 0;
+  const classImageCounts = Object.fromEntries(classes.map((name) => [name,
+    samples.filter((row) => (row.class_counts?.[name] || 0) > 0).length]));
+  const labeledClasses = classes.filter((name) => classImageCounts[name] > 0);
+  const insufficient = labeledClasses.filter((name) => classImageCounts[name] < 4);
   $("datasetSummary").textContent = `${samples.length} ภาพ · ติดป้ายแล้ว ${labeledCount} · รอติดป้าย ${pendingCount} · ${totalBoxes} กรอบสินค้า`;
-  $("trainingReadiness").textContent = !targetClass
-    ? "เลือกคลาสเป้าหมายที่จะ Fine-tune"
-    : targetImageCount < 4
-      ? `คลาส ${targetClass} มีภาพติดป้าย ${targetImageCount}/4 ภาพ · ต้องมีอย่างน้อย 4 ภาพ`
-      : `${targetImageCount} ภาพของ ${targetClass} พร้อมฝึก · รักษาโมเดลต้นทางและเสริมเฉพาะคลาสนี้`;
-  $("startTraining").disabled = !targetClass || targetImageCount < 4
+  $("trainingClasses").textContent = labeledClasses.length
+    ? labeledClasses.join(", ") : "ยังไม่มีคลาสที่ติดป้าย";
+  $("trainingReadiness").textContent = !labeledClasses.length
+    ? "ติดป้ายสินค้าในภาพก่อนเริ่ม Fine-tune"
+    : insufficient.length
+      ? `ต้องมีอย่างน้อย 4 ภาพต่อคลาส · ยังขาด: ${insufficient.map((name) => `${name} ${classImageCounts[name]}/4`).join(", ")}`
+      : `${labeledCount} ภาพ · ${labeledClasses.length} คลาสพร้อมฝึกพร้อมกัน (ควรมีภาพจริงมากกว่า 4 ภาพต่อคลาส)`;
+  $("startTraining").disabled = !labeledClasses.length || insufficient.length > 0
     || ["queued", "running"].includes(window.latestTrainingStatus);
 
   const totals = Object.fromEntries(classes.map((name) => [name, 0]));
@@ -459,9 +449,34 @@ function renderDataset() {
     edit.className = "btn btn-outline-primary btn-sm flex-shrink-0";
     edit.textContent = sample.annotation_count > 0 ? "แก้ป้ายกำกับ" : "ติดป้ายกำกับ";
     edit.onclick = () => openSample(sample.id);
-    row.append(detail, edit);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "btn btn-outline-danger btn-sm flex-shrink-0";
+    remove.textContent = "ลบภาพ";
+    remove.setAttribute("aria-label", `ลบภาพ ${sample.filename}`);
+    remove.onclick = () => deleteSample(sample, remove);
+    const actions = document.createElement("div");
+    actions.className = "d-flex flex-wrap gap-2 flex-shrink-0";
+    actions.append(edit, remove);
+    row.append(detail, actions);
     list.append(row);
   });
+}
+
+async function deleteSample(sample, button) {
+  if (!confirm(`ลบภาพ “${sample.filename}” และป้ายกำกับทั้งหมดของภาพนี้หรือไม่?`)) return;
+  button.disabled = true;
+  try {
+    await requestJson(`${API}?action=image&id=${encodeURIComponent(sample.id)}`, { method: "DELETE" });
+    if (editingId === sample.id) resetEditor();
+    await loadDataset();
+    $("datasetMessage").textContent = `ลบภาพ ${sample.filename} แล้ว`;
+    $("datasetMessage").className = "small text-success mt-3 mb-0";
+  } catch (error) {
+    $("datasetMessage").textContent = `ลบภาพไม่ได้: ${error.message}`;
+    $("datasetMessage").className = "small text-danger mt-3 mb-0";
+    button.disabled = false;
+  }
 }
 
 $("refreshDataset").addEventListener("click", loadDataset);
@@ -482,7 +497,6 @@ function renderJob(job) {
   currentJobId = job.id;
   window.latestTrainingStatus = job.status;
   $("jobPanel").hidden = false;
-  $("fineTuneClass").disabled = !classes.length || ["queued", "running"].includes(job.status);
   $("jobStatus").textContent = `${jobLabels[job.status] || job.status} · ${job.id.slice(0, 8)}`;
   $("jobProgressText").textContent = job.status === "running" || job.status === "completed"
     ? `Epoch ${job.epoch}/${job.epochs}` : "";
@@ -495,20 +509,15 @@ function renderJob(job) {
   const baseline = job.baseline_metrics?.["target/mAP50-95"];
   const candidate = job.metrics?.["target/mAP50-95"];
   const scoreText = comparison
-    ? `mAP50–95 คลาสเป้าหมาย: เดิม ${baseline} → ใหม่ ${candidate} · Δ ${comparison.target_map_delta}`
+    ? `mAP50–95 เฉลี่ยของ ${job.target_classes?.length || 1} คลาสที่ฝึก: เดิม ${baseline} → ใหม่ ${candidate} · Δ ${comparison.target_map_delta}`
     : "";
   const warnings = job.dataset?.warnings || [];
   $("jobMetrics").textContent = [
     metricEntries.length
-      ? `${job.metrics_scope === "target_specialist" ? "Validation ตัวเสริม" : "Validation"}: ${metricEntries.map(([key, value]) => `${key} ${value}`).join(" · ")}` : "",
+      ? `Validation ตัวเสริม: ${metricEntries.map(([key, value]) => `${key} ${value}`).join(" · ")}` : "",
     scoreText, ...warnings,
   ].filter(Boolean).join(" · ");
-  const targetClass = $("fineTuneClass").value;
-  const targetImageCount = targetClass
-    ? samples.filter((row) => (row.class_counts?.[targetClass] || 0) > 0).length
-    : 0;
-  $("startTraining").disabled = !targetClass || targetImageCount < 4
-    || ["queued", "running"].includes(job.status);
+  renderDataset();
   if (job.status === "completed") loadModels("job:" + job.id);
   if (["queued", "running"].includes(job.status)) schedulePoll();
   else if (pollTimer) clearTimeout(pollTimer);
@@ -587,19 +596,16 @@ $("startTraining").addEventListener("click", async () => {
     const job = await requestJson(`${API}?action=start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ epochs, target_class: $("fineTuneClass").value }),
+      body: JSON.stringify({ epochs }),
     });
     currentJobId = job.id;
     renderJob(job);
   } catch (error) {
+    renderDataset();
     $("trainingReadiness").textContent = error.message;
-    const targetClass = $("fineTuneClass").value;
-    button.disabled = !targetClass
-      || samples.filter((row) => (row.class_counts?.[targetClass] || 0) > 0).length < 4;
   }
 });
 
-$("fineTuneClass").addEventListener("change", renderDataset);
 $("modelSelect").addEventListener("change", updateModelSelection);
 $("refreshModels").addEventListener("click", () => loadModels());
 

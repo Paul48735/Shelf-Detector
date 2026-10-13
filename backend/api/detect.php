@@ -109,9 +109,6 @@ try {
             'planogram_id' => $requestedPlanId,
             'planogram' => json_encode($plan, JSON_THROW_ON_ERROR),
         ];
-        if (array_key_exists('perspective_corners', $_POST)) {
-            $postFields['perspective_corners'] = (string) $_POST['perspective_corners'];
-        }
         [$statusCode, $response] = callAiService(
             AI_SERVICE_URL . '/predict',
             [CURLOPT_POST => true, CURLOPT_POSTFIELDS => $postFields]
@@ -124,13 +121,7 @@ try {
         if ($resultPlanId !== ($requestedPlanId === '' ? null : $requestedPlanId)) {
             inferenceJsonResponse(['success' => false, 'message' => 'ผลตรวจไม่ตรงกับ Planogram ที่เลือก'], 502);
         }
-        // A failed alignment has no trustworthy Planogram coordinates. Persist
-        // its visible detections as an unassociated run so product/gap rows
-        // satisfy the no-planogram constraints and history stays honest.
-        $savedPlanId = ($response['alignment']['status'] ?? null) === 'failed'
-            ? null
-            : ($requestedPlanId ?: null);
-        $response['detection_run_id'] = saveDetection($db, $response, $savedPlanId);
+        $response['detection_run_id'] = saveDetection($db, $response, $requestedPlanId ?: null);
     }
     inferenceJsonResponse($response, $statusCode ?: 502);
 } catch (Throwable $error) {

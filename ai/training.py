@@ -187,6 +187,23 @@ class TrainingManager:
             self._save_manifest(manifest)
         return self._summary(manifest)
 
+    def delete_image(self, image_id):
+        with self._lock:
+            latest = self._latest_job()
+            if latest and latest["status"] in {"queued", "running"}:
+                raise ValueError("รอให้การ Fine-tune เสร็จก่อนลบภาพ")
+            with self._dataset_lock:
+                manifest = self._read_manifest(image_id)
+                filename = manifest.get("filename", "")
+                if (not isinstance(filename, str) or
+                        filename != f"{image_id}{Path(filename).suffix.lower()}" or
+                        Path(filename).suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}):
+                    raise ValueError("ชื่อไฟล์ภาพชุดฝึกไม่ถูกต้อง")
+                image_path = TRAINING_IMAGES_DIR / filename
+                image_path.unlink(missing_ok=True)
+                self._manifest_path(image_id).unlink()
+                return {"id": image_id, "message": "ลบภาพชุดฝึกแล้ว"}
+
     @staticmethod
     def _summary(manifest):
         counts = {}
@@ -412,28 +429,33 @@ class TrainingManager:
                 images = self.list_images()
                 available_classes = self.class_names()
                 if target_class is None:
-                    labeled_classes = {
+                    target_classes = sorted({
                         name for row in images for name in row["class_counts"]
-                    }
-                    if len(labeled_classes) == 1:
-                        target_class = next(iter(labeled_classes))
-                    else:
-                        raise ValueError("เลือกคลาสเป้าหมายที่จะ Fine-tune ก่อน")
-                if not isinstance(target_class, str) or target_class not in available_classes:
+                    })
+                elif isinstance(target_class, str):
+                    target_classes = [target_class]
+                else:
+                    raise ValueError("คลาสเป้าหมายไม่ถูกต้อง")
+                if not target_classes or any(name not in available_classes for name in target_classes):
                     raise ValueError("เลือกคลาสเป้าหมายจากรายการคลาสของโมเดล")
-                target_images = [
-                    row for row in images if row["class_counts"].get(target_class, 0) > 0
-                ]
-                if len(target_images) < MIN_TRAINING_IMAGES:
+                image_counts = {name: sum(row["class_counts"].get(name, 0) > 0 for row in images)
+                                for name in target_classes}
+                insufficient = [f"{name} ({count}/{MIN_TRAINING_IMAGES})"
+                                for name, count in image_counts.items() if count < MIN_TRAINING_IMAGES]
+                if insufficient:
                     raise ValueError(
-                        f"คลาส {target_class} ต้องมีภาพที่ติดป้ายอย่างน้อย {MIN_TRAINING_IMAGES} ภาพ"
+                        "แต่ละคลาสต้องมีภาพที่ติดป้ายอย่างน้อย "
+                        f"{MIN_TRAINING_IMAGES} ภาพ: " + ", ".join(insufficient)
                     )
+                target_images = [row for row in images if any(
+                    row["class_counts"].get(name, 0) > 0 for name in target_classes
+                )]
             job_id = uuid.uuid4().hex
             state = {
                 "id": job_id, "status": "queued", "created_at": utc_now(),
                 "updated_at": utc_now(), "epoch": 0, "epochs": epochs,
                 "progress": 0, "image_count": len(target_images),
-                "target_class": target_class, "target_classes": [target_class], "metrics": {},
+                "target_class": target_class, "target_classes": target_classes, "metrics": {},
                 "message": "รอเริ่ม Fine-tune", "candidate": None,
             }
             self._write_job(state)
@@ -476,9 +498,10 @@ class TrainingManager:
             state = self._read_job(job_id)
             state.update({
                 "target_classes": target_class_names, "baseline_metrics": baseline,
-                "training_strategy": "protected_target_adapter",
+                "training_strategy": "protected_multi_class_adapter" if len(target_class_names) > 1
+                    else "protected_target_adapter",
                 "dataset": json.loads((job_dir / "dataset_summary.json").read_text(encoding="utf-8")),
-                "message": "กำลังฝึกคลาสเป้าหมาย · เก็บโมเดลต้นทางเพื่อรักษาสินค้าคลาสอื่น",
+                "message": f"กำลังฝึก {len(target_class_names)} คลาส · เก็บโมเดลต้นทางเพื่อรักษาคลาสอื่น",
             })
             self._write_job(state)
 
@@ -530,7 +553,9 @@ class TrainingManager:
                 "status": "completed", "progress": 100, "updated_at": utc_now(),
                 "candidate": str(candidate), "metrics": metrics,
                 "source_model_hash": self._file_hash(source_model),
-                "preservation": preservation, "metrics_scope": "target_specialist",
+                "preservation": preservation,
+                "metrics_scope": "multi_class_adapter" if len(target_class_names) > 1
+                    else "target_specialist",
                 "comparison": {
                     "target_map_delta": round(target_delta, 5),
                     "overall_map_delta": round(overall_delta, 5),
@@ -614,6 +639,13 @@ class TrainingManager:
             )]
             if len(targets) < MIN_TRAINING_IMAGES:
                 raise ValueError(f"ต้องมีภาพคลาสเป้าหมายที่ไม่ซ้ำกันอย่างน้อย {MIN_TRAINING_IMAGES} ภาพ")
+            if include_target_classes:
+                insufficient = [name for name in target_class_names if sum(any(
+                    item["class_name"] == name for item in row["annotations"]
+                ) for row in manifests) < MIN_TRAINING_IMAGES]
+                if insufficient:
+                    raise ValueError("ภาพที่ไม่ซ้ำกันของคลาสเหล่านี้มีไม่ถึง "
+                                     f"{MIN_TRAINING_IMAGES} ภาพ: " + ", ".join(insufficient))
             split_rows = self._split_dataset(manifests, target_class_names)
             summary = {
                 "unique_image_count": len(manifests), "duplicates_removed": duplicate_count,

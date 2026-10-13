@@ -177,6 +177,70 @@ class TrainingTests(unittest.TestCase):
                 self.assertEqual(active.read_bytes(), b"original-model")
                 self.assertFalse((root / "jobs" / job_id / "source.pt").exists())
 
+    def test_fine_tune_all_labeled_classes_in_one_job(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            active = root / "active.pt"
+            active.write_bytes(b"original-model")
+            with patch.object(training, "TRAINING_IMAGES_DIR", root / "images"), \
+                 patch.object(training, "TRAINING_JOBS_DIR", root / "jobs"), \
+                 patch.object(training, "MODEL_ARCHIVE_DIR", root / "archive"), \
+                 patch.object(training, "PRODUCT_MODEL_PATH", active):
+                manager = TrainingManager(lambda: ["a", "b"])
+                for value in [0, 30, 60, 90]:
+                    upload = io.BytesIO(cv2.imencode(".jpg", np.full((24, 32, 3), value, dtype=np.uint8))[1].tobytes())
+                    upload.filename = "shelf.jpg"
+                    manager.save_image(upload, [
+                        {"class_name": "a", "box": [0.1, 0.1, 0.4, 0.9]},
+                        {"class_name": "b", "box": [0.6, 0.1, 0.9, 0.9]},
+                    ])
+                with patch.object(training.threading, "Thread") as thread:
+                    job = manager.start(5)
+                self.assertEqual(job["target_classes"], ["a", "b"])
+                self.assertIsNone(job["target_class"])
+                thread.assert_called_once()
+                thread.return_value.start.assert_called_once()
+
+                job_id = job["id"]
+                candidate = root / "jobs" / job_id / "runs/finetune/weights/best.pt"
+                def result(score):
+                    return SimpleNamespace(results_dict={"metrics/mAP50-95(B)": score},
+                                           box=SimpleNamespace(ap_class_index=[0, 1], maps=[score, score]))
+                baseline_model, source_model, best_model = Mock(), Mock(), Mock()
+                baseline_model.val.return_value = result(0.2)
+                best_model.val.return_value = result(0.4)
+                def train(**kwargs):
+                    candidate.parent.mkdir(parents=True)
+                    candidate.write_bytes(b"best-model")
+                source_model.train.side_effect = train
+                with patch.object(training, "attach_preservation", return_value={"version": 1}) as package, \
+                     patch.object(training, "YOLO", side_effect=[baseline_model, source_model, best_model]):
+                    manager._run(job_id, 5, None)
+                state = manager._read_job(job_id)
+                self.assertEqual(state["status"], "completed")
+                self.assertEqual(state["target_classes"], ["a", "b"])
+                self.assertEqual(state["metrics_scope"], "multi_class_adapter")
+                package.assert_called_once_with(candidate, root / "jobs" / job_id / "source.pt",
+                                                ["a", "b"], root / "archive")
+                self.assertEqual(active.read_bytes(), b"original-model")
+
+    def test_fine_tune_all_classes_requires_four_images_per_class(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with patch.object(training, "TRAINING_IMAGES_DIR", root / "images"), \
+                 patch.object(training, "TRAINING_JOBS_DIR", root / "jobs"), \
+                 patch.object(training, "MODEL_ARCHIVE_DIR", root / "archive"):
+                manager = TrainingManager(lambda: ["a", "b"])
+                for value in [0, 30, 60, 90]:
+                    upload = io.BytesIO(cv2.imencode(".jpg", np.full((24, 32, 3), value, dtype=np.uint8))[1].tobytes())
+                    upload.filename = "shelf.jpg"
+                    labels = [{"class_name": "a", "box": [0.1, 0.1, 0.4, 0.9]}]
+                    if value == 0:
+                        labels.append({"class_name": "b", "box": [0.6, 0.1, 0.9, 0.9]})
+                    manager.save_image(upload, labels)
+                with self.assertRaisesRegex(ValueError, "b \\(1/4\\)"):
+                    manager.start(5)
+
     def test_training_upload_endpoint_saves_annotated_image(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -199,6 +263,46 @@ class TrainingTests(unittest.TestCase):
                     )
                 self.assertEqual(response.status_code, 201)
                 self.assertEqual(response.json["data"]["annotation_count"], 1)
+
+    def test_delete_uploaded_image_removes_file_and_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with patch.object(training, "TRAINING_IMAGES_DIR", root / "images"), \
+                 patch.object(training, "TRAINING_JOBS_DIR", root / "jobs"), \
+                 patch.object(training, "MODEL_ARCHIVE_DIR", root / "archive"):
+                manager = TrainingManager(lambda: ["product-a"])
+                encoded = cv2.imencode(".jpg", np.zeros((24, 32, 3), dtype=np.uint8))[1].tobytes()
+                upload = io.BytesIO(encoded)
+                upload.filename = "shelf.jpg"
+                saved = manager.save_image(upload, [], allow_unlabeled=True)
+                image_id = saved["id"]
+                image_path = root / "images" / f"{image_id}.jpg"
+                self.assertTrue(image_path.exists())
+
+                with patch.object(api, "training_manager", manager):
+                    response = api.app.test_client().delete(f"/training/images/{image_id}")
+                    missing = api.app.test_client().delete(f"/training/images/{image_id}")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(missing.status_code, 404)
+                self.assertFalse(image_path.exists())
+                self.assertFalse((root / "images" / f"{image_id}.json").exists())
+                self.assertEqual(manager.list_images(), [])
+
+    def test_cannot_delete_image_while_training_is_queued(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with patch.object(training, "TRAINING_IMAGES_DIR", root / "images"), \
+                 patch.object(training, "TRAINING_JOBS_DIR", root / "jobs"), \
+                 patch.object(training, "MODEL_ARCHIVE_DIR", root / "archive"):
+                manager = TrainingManager(lambda: ["product-a"])
+                upload = io.BytesIO(cv2.imencode(".jpg", np.zeros((24, 32, 3), dtype=np.uint8))[1].tobytes())
+                upload.filename = "shelf.jpg"
+                image_id = manager.save_image(upload, [], allow_unlabeled=True)["id"]
+                manager._write_job({"id": "a" * 32, "status": "queued"})
+                with patch.object(api, "training_manager", manager):
+                    response = api.app.test_client().delete(f"/training/images/{image_id}")
+                self.assertEqual(response.status_code, 400)
+                self.assertTrue((root / "images" / f"{image_id}.jpg").exists())
 
     def test_training_endpoint_rejects_external_browser_origin(self):
         response = api.app.test_client().get(

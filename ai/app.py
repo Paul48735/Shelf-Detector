@@ -6,7 +6,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import cv2
-import numpy as np
 from flask import Flask, jsonify, request, send_from_directory
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
@@ -22,7 +21,6 @@ from config import (
 )
 from model_service import ModelServiceError, ShelfModelService
 from planogram import validate_inference_plan, validate_plan
-from perspective import correct_perspective, detect_shelf_corners, preview_data_url, validate_corners
 from training import TrainingManager
 
 
@@ -186,6 +184,16 @@ def update_training_image(image_id):
         return error_response(str(exc), 503)
 
 
+@app.delete("/training/images/<image_id>")
+def delete_training_image(image_id):
+    try:
+        return jsonify({"success": True, "data": training_manager.delete_image(image_id)})
+    except ValueError as exc:
+        return error_response(str(exc), 400)
+    except FileNotFoundError as exc:
+        return error_response(str(exc), 404)
+
+
 @app.get("/training/jobs/latest")
 def latest_training_job():
     return jsonify({"success": True, "data": training_manager.job()})
@@ -261,41 +269,6 @@ def delete_training_model():
         return error_response(str(exc), 500)
 
 
-@app.post('/perspective/preview')
-def perspective_preview():
-    image_file = request.files.get('image')
-    if image_file is None or not image_file.filename:
-        return error_response('กรุณาเลือกไฟล์ภาพ', 400)
-    if Path(image_file.filename).suffix.lower() not in ALLOWED_EXTENSIONS:
-        return error_response('รองรับเฉพาะไฟล์ JPG, JPEG, PNG และ WEBP', 400)
-    try:
-        plan = json.loads(request.form.get('planogram', 'null'))
-        plan_id = request.form.get('planogram_id', '').strip()
-        if not isinstance(plan, dict) or plan.get('id') != plan_id:
-            return error_response('กรุณาเลือก Planogram ที่ถูกต้อง', 400)
-        plan = validate_inference_plan(plan, model_service.class_names())
-        image_bytes = image_file.read(MAX_FILE_SIZE + 1)
-        if len(image_bytes) > MAX_FILE_SIZE:
-            return error_response('ไฟล์ภาพต้องมีขนาดไม่เกิน 10 MB', 413)
-        image = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
-        if image is None:
-            return error_response('ไฟล์ที่อัปโหลดไม่ใช่ภาพที่อ่านได้', 400)
-        supplied = request.form.get('corners')
-        if supplied is None:
-            analysis = detect_shelf_corners(image)
-            corners = analysis['corners']
-        else:
-            corners = validate_corners(json.loads(supplied)).tolist()
-            analysis = {'corners': corners, 'confidence': 1.0,
-                        'status': 'ready', 'method': 'user_selected', 'reason': None}
-        if corners is not None:
-            corrected, _ = correct_perspective(image, plan, corners)
-            analysis['corrected_image'] = preview_data_url(corrected)
-        return jsonify(success=True, data=analysis)
-    except (ValueError, TypeError, json.JSONDecodeError) as exc:
-        return error_response(str(exc), 400)
-
-
 @app.post("/predict")
 def predict():
     image_file = request.files.get("image")
@@ -312,10 +285,6 @@ def predict():
             return error_response('กรุณาระบุรหัส Planogram', 400)
         if plan is not None:
             plan = validate_inference_plan(plan, model_service.class_names())
-        raw_corners = request.form.get('perspective_corners')
-        perspective_corners = validate_corners(json.loads(raw_corners)).tolist() if raw_corners is not None else None
-        if perspective_corners is not None and plan is None:
-            return error_response('ต้องเลือก Planogram เมื่อเปิดการปรับ perspective', 400)
         product_confidence = parse_confidence(
             request.form.get(
                 "product_confidence", DEFAULT_PRODUCT_CONFIDENCE
@@ -350,7 +319,7 @@ def predict():
             upload_path.unlink(missing_ok=True)
             return error_response("ไฟล์ที่อัปโหลดไม่ใช่ภาพที่อ่านได้", 400)
         detection_result = model_service.detect_scene(
-            upload_path, result_path, product_confidence, gap_confidence, plan, perspective_corners
+            upload_path, result_path, product_confidence, gap_confidence, plan
         )
     except ValueError as exc:
         for path in cleanup_paths:
