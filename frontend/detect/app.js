@@ -19,6 +19,144 @@ const resultPanel = document.querySelector("#resultPanel");
 const planogramSelect = document.querySelector("#planogramSelect");
 let selectedFile = null;
 let previewUrl = null;
+let selectedPlan = null;
+let sourceRatio = null;
+let busy = false;
+let planLoading = false;
+let alignmentReady = false;
+let previewGeneration = 0;
+let showingResult = false;
+const byId = id => document.getElementById(id);
+const alignmentPanel = byId('alignmentPanel');
+function uploadPointsChanged(points, source) {
+  for (const picker of [uploadPicker, detailUploadPicker]) {
+    if (picker !== source) { picker.points = points.map(p => [...p]); picker.draw?.(); }
+  }
+  if (showingResult) {
+    showingResult = false; previewImage.hidden = true;
+    byId('uploadAlignmentPicker').hidden = false;
+    imageCaption.textContent = 'ภาพต้นฉบับ — กำลังเลือกจุดอ้างอิง';
+  }
+  invalidateAlignment(); updateAlignmentHint(); resultPanel.hidden = true;
+}
+const uploadPicker = new CornerPicker(byId('uploadAlignmentPicker'), points => uploadPointsChanged(points, uploadPicker), message => alignmentError(message));
+const detailUploadPicker = new CornerPicker(byId('detailUploadAlignmentPicker'), points => uploadPointsChanged(points, detailUploadPicker), message => alignmentError(message));
+const referencePicker = new CornerPicker(byId('referenceAlignmentPicker'), () => {}, () => {
+  alignmentError('ภาพด้านขวาเป็นภาพอ้างอิง ให้คลิกภาพอัปโหลดด้านซ้ายเพื่อกำหนดจุด 1–4');
+});
+
+function alignmentError(message = '') {
+  byId('alignmentError').textContent = message;
+  byId('alignmentError').hidden = !message;
+}
+function invalidateAlignment() {
+  previewGeneration++; alignmentReady = false;
+  byId('alignedPreviewSection').hidden = true; alignmentError();
+}
+function updateAlignmentHint() {
+  const ready = validAlignmentPoints(selectedPlan?.alignment_points);
+  const count = uploadPicker.points.length;
+  byId('alignmentHint').textContent = !selectedPlan
+    ? 'เลือก Planogram เพื่อใช้การจัดแนว หรือกดตรวจสอบภาพต้นฉบับได้เลย'
+    : !ready ? 'แผนนี้ยังไม่มีจุดอ้างอิงโครงตู้ เปิดหน้า Planogram กำหนด 4 จุดแล้วบันทึกแผนใหม่ก่อนใช้การจัดแนว ขณะนี้ยังตรวจภาพต้นฉบับได้'
+      : count === 4 ? (alignmentReady ? 'แสดงตัวอย่างแล้ว ตรวจภาพด้านล่างก่อนกดตรวจสอบภาพ' : 'ครบ 4 จุดแล้ว กดแสดงภาพหลังจัดแนว จากนั้นกดตรวจสอบภาพ')
+        : `เลือกแล้ว ${count}/4 จุด · ${count ? 'เลือกให้ครบ หรือล้างจุดเพื่อใช้ภาพต้นฉบับ' : 'ยังไม่เลือกจุด: Detect จะใช้ภาพต้นฉบับ'}`;
+  // Reference points are required to warp, not to let the user select source points.
+  uploadPicker.readonly = false;
+  detailUploadPicker.readonly = false;
+  byId('detailPointStatus').textContent = `เลือกแล้ว ${count}/4 จุด · คลิกภาพด้านบนของข้อความนี้เพื่อเพิ่มจุด หรือลากจุดเดิมเพื่อแก้ไข`;
+  byId('uploadPointStatus').textContent = showingResult
+    ? 'กำลังแสดงผล Detect กดเลือก / แก้จุดเพื่อกลับไปภาพต้นฉบับ'
+    : `คลิกบนภาพนี้ได้เลย (${count}/4 จุด): 1 บนซ้าย → 2 บนขวา → 3 ล่างขวา → 4 ล่างซ้าย`;
+  byId('setupPlanAlignment').hidden = ready;
+  byId('setupPlanAlignment').href = `../planogram/${selectedPlan ? '?id=' + encodeURIComponent(selectedPlan.id) : ''}#alignment`;
+  byId('undoUploadAlignment').disabled = !count || busy;
+  byId('clearUploadAlignment').disabled = !count || busy;
+  byId('previewAlignment').disabled = !ready || count !== 4 || busy || planLoading;
+  byId('detectAligned').disabled = !alignmentReady || busy;
+}
+function refreshAlignmentPanel() {
+  alignmentPanel.hidden = !selectedFile || !sourceRatio;
+  showingResult = false;
+  const hasImage = !!selectedFile && !!sourceRatio;
+  byId('uploadPointControls').hidden = !hasImage;
+  byId('uploadAlignmentPicker').hidden = !hasImage;
+  if (hasImage) previewImage.hidden = true;
+  uploadPicker.setImage(previewUrl, sourceRatio || 1, [], false);
+  detailUploadPicker.setImage(previewUrl, sourceRatio || 1, [], false);
+  referencePicker.setImage(selectedPlan?.image || '', selectedPlan?.ratio || 1, selectedPlan?.alignment_points || [], true);
+  invalidateAlignment(); updateAlignmentHint();
+}
+function setBusy(value) {
+  busy = value; form.inert = value; alignmentPanel.inert = value;
+  byId('uploadPointControls').inert = value;
+  byId('uploadAlignmentPicker').inert = value;
+  updateSubmitState(); updateAlignmentHint();
+}
+function overlayPlan() {
+  const svg = byId('alignedRegions'); svg.replaceChildren();
+  const height = 1000 / selectedPlan.ratio;
+  svg.setAttribute('viewBox', `0 0 1000 ${height}`);
+  for (const region of selectedPlan.shelves) {
+    const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    polygon.setAttribute('points', region.points.map(([x, y]) => `${x * 1000},${y * height}`).join(' '));
+    polygon.setAttribute('fill', '#20c99722'); polygon.setAttribute('stroke', '#20c997'); polygon.setAttribute('stroke-width', '3');
+    svg.append(polygon);
+  }
+}
+async function loadSelectedPlan() {
+  const id = planogramSelect.value;
+  selectedPlan = null; planLoading = !!id; resultPanel.hidden = true;
+  refreshAlignmentPanel(); updateSubmitState(); setError();
+  if (!id) return;
+  try {
+    const response = await fetch(`${API_BASE}/planogram.php?id=${encodeURIComponent(id)}`);
+    const payload = await readJsonResponse(response);
+    if (!response.ok || !payload.success || !payload.data) throw new Error(payload.message || 'โหลดแผนไม่ได้');
+    if (planogramSelect.value !== id) return;
+    selectedPlan = payload.data;
+  } catch (error) { if (planogramSelect.value === id) setError(error.message); }
+  finally {
+    if (planogramSelect.value === id) { planLoading = false; refreshAlignmentPanel(); updateSubmitState(); }
+  }
+}
+planogramSelect.addEventListener('change', loadSelectedPlan);
+byId('undoUploadAlignment').onclick = () => uploadPicker.undo();
+byId('clearUploadAlignment').onclick = () => uploadPicker.clear();
+function editUploadPoints() {
+  if (!selectedFile || !sourceRatio || busy) return;
+  showingResult = false;
+  previewImage.hidden = true;
+  byId('uploadAlignmentPicker').hidden = false;
+  imageCaption.textContent = 'ภาพต้นฉบับ — คลิกจุดโครงตู้ 4 จุด หรือไม่เลือกจุดเพื่อตรวจภาพตามปกติ';
+  updateAlignmentHint();
+  imageStage.scrollIntoView({behavior: 'smooth', block: 'center'});
+}
+byId('editUploadPoints').onclick = editUploadPoints;
+byId('backToUploadPoints').onclick = editUploadPoints;
+byId('detectAligned').onclick = () => form.requestSubmit();
+byId('previewAlignment').onclick = async () => {
+  if (busy || !selectedFile || uploadPicker.points.length !== 4 || !selectedPlan) return;
+  const generation = ++previewGeneration;
+  setBusy(true); alignmentError();
+  byId('previewAlignment').textContent = 'กำลังจัดแนวภาพ...';
+  try {
+    const body = new FormData();
+    body.append('image', selectedFile, selectedFile.name);
+    body.append('alignment_points', JSON.stringify(uploadPicker.points));
+    const response = await fetch(`${API_BASE}/detect.php?preview=1`, {
+      method: 'POST', headers: {'X-Planogram-Id': selectedPlan.id}, body,
+    });
+    const payload = await readJsonResponse(response);
+    if (!response.ok || !payload.success) throw new Error(payload.message || 'จัดแนวภาพไม่สำเร็จ');
+    if (generation !== previewGeneration) return;
+    byId('alignedPreview').src = payload.image;
+    overlayPlan(); byId('alignedPreviewSection').hidden = false;
+    alignmentReady = true;
+    byId('alignedPreviewSection').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  } catch (error) { if (generation === previewGeneration) { alignmentReady = false; alignmentError(error.message); } }
+  finally { byId('previewAlignment').textContent = 'แสดงภาพหลังจัดแนว'; setBusy(false); }
+};
 
 async function readJsonResponse(response) {
   const raw = await response.text();
@@ -38,7 +176,7 @@ function setError(message = "") {
 }
 
 function updateSubmitState() {
-  submitButton.disabled = !selectedFile;
+  submitButton.disabled = !selectedFile || busy || planLoading || !sourceRatio;
 }
 
 function setPreview(file) {
@@ -49,6 +187,15 @@ function setPreview(file) {
   emptyState.hidden = true;
   imageStage.classList.remove("empty");
   imageCaption.textContent = "ภาพที่รอตรวจสอบ";
+  sourceRatio = null;
+  refreshAlignmentPanel();
+  const url = previewUrl;
+  const source = new Image(); source.src = url;
+  source.decode().then(() => {
+    if (previewUrl !== url) return;
+    sourceRatio = source.naturalWidth / source.naturalHeight;
+    refreshAlignmentPanel(); updateSubmitState();
+  }).catch(() => { if (previewUrl === url) setError('อ่านไฟล์ภาพไม่สำเร็จ'); });
 }
 
 function acceptFile(file) {
@@ -77,6 +224,8 @@ function clearFile() {
   resultPanel.hidden = true;
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = null;
+  sourceRatio = null;
+  refreshAlignmentPanel();
   updateSubmitState();
 }
 
@@ -155,9 +304,17 @@ function showResult(payload) {
       document.querySelector("#productList").append(row);
     });
   renderGaps(payload.gaps);
+  showingResult = true;
+  byId('uploadAlignmentPicker').hidden = true;
+  previewImage.hidden = false;
+  updateAlignmentHint();
   previewImage.src = `${payload.result_image_url}?v=${Date.now()}`;
   previewImage.alt = "ผลตรวจจับสินค้าและช่องว่าง";
-  imageCaption.textContent = `พบสินค้า ${payload.total_products} ชิ้น · ผิด shelf ${payload.wrong_shelf_count || 0} ชิ้น · gap ที่ระบุได้ ${payload.identified_gaps} ตำแหน่ง`;
+  imageCaption.textContent = `${payload.alignment?.applied ? 'จัดแนวเข้ากับ Planogram แล้ว' : 'ตรวจภาพต้นฉบับ'} · พบสินค้า ${payload.total_products} ชิ้น · ผิด shelf ${payload.wrong_shelf_count || 0} ชิ้น · gap ที่ระบุได้ ${payload.identified_gaps} ตำแหน่ง`;
+  if (payload.aligned_image_url) {
+    byId('alignedPreview').src = payload.aligned_image_url;
+    byId('alignedPreviewSection').hidden = false;
+  }
   resultPanel.hidden = false;
   resultPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -212,7 +369,11 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
   setError();
   if (!selectedFile) return setError("กรุณาเลือกไฟล์ภาพ");
-  submitButton.disabled = true;
+  if (planogramSelect.value && !selectedPlan) return setError('โหลด Planogram ไม่สำเร็จ กรุณาเลือกแผนใหม่');
+  if (uploadPicker.points.length && !validAlignmentPoints(selectedPlan?.alignment_points))
+    return setError('เลือกจุดบนภาพแล้ว แต่ Planogram ยังไม่มีจุดอ้างอิง ให้กดลิงก์กำหนดจุดอ้างอิงของแผน หรือกดล้างจุดเพื่อตรวจภาพต้นฉบับ');
+  if (uploadPicker.points.length && !alignmentReady) return setError('เลือกจุดให้ครบ 4 จุดแล้วกดแสดงภาพหลังจัดแนวก่อนตรวจสอบ หรือล้างจุดเพื่อใช้ภาพต้นฉบับ');
+  setBusy(true);
   submitButton.querySelector(".button-label").hidden = true;
   submitButton.querySelector(".button-loading").hidden = false;
   const planogramId = planogramSelect.value;
@@ -225,6 +386,7 @@ form.addEventListener("submit", async (event) => {
     body.append("product_confidence", productConfidence.value);
     body.append("gap_confidence", gapConfidence.value);
     body.append("planogram_id", planogramId);
+    body.append('alignment_points', JSON.stringify(uploadPicker.points));
     const response = await fetch(`${API_BASE}/detect.php`, {
       method: "POST",
       headers: {
@@ -244,7 +406,7 @@ form.addEventListener("submit", async (event) => {
   } finally {
     submitButton.querySelector(".button-label").hidden = false;
     submitButton.querySelector(".button-loading").hidden = true;
-    updateSubmitState();
+    setBusy(false);
   }
 });
 
@@ -261,7 +423,7 @@ fetch(`${API_BASE}/planogram.php?list=1`)
         planogramSelect.append(new Option(`${item.name} · ${savedAt} · ${item.id.slice(0, 8)}`, item.id));
       });
       document.querySelector("#planogramStatus").textContent =
-        "เลือกแผนของชั้นวางเดียวกันและถ่ายภาพให้มุมมองใกล้เคียงภาพอ้างอิง";
+        "เลือกแผนของชั้นวางเดียวกัน ภาพเอียงสามารถกำหนดจุดอ้างอิงเพื่อปรับมุมได้ ส่วนภาพตรงไม่ต้องกำหนดจุด";
     } else
       document.querySelector("#planogramStatus").textContent =
         "ยังไม่มีแผน กรุณาบันทึกในหน้ากำหนด Planogram";

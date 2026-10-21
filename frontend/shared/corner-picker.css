@@ -1,0 +1,7 @@
+.perspective-picker { display: block; width: 100%; height: auto; touch-action: none; cursor: crosshair; background: #e9ecef; }
+.perspective-picker circle { cursor: grab; }
+.perspective-picker[data-readonly="true"], .perspective-picker[data-readonly="true"] circle { cursor: default; }
+.perspective-picker circle:focus { outline: none; stroke: #ffc107; stroke-width: 6; }
+.perspective-preview { position: relative; }
+.perspective-preview > img { display: block; width: 100%; }
+.perspective-preview > svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }

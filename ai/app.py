@@ -1,3 +1,4 @@
+import base64
 import uuid
 import json
 import hashlib
@@ -6,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import cv2
+import numpy as np
 from flask import Flask, jsonify, request, send_from_directory
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
@@ -20,6 +22,7 @@ from config import (
     UPLOAD_DIR,
 )
 from model_service import ModelServiceError, ShelfModelService
+from alignment import align_image
 from planogram import validate_inference_plan, validate_plan
 from training import TrainingManager
 
@@ -293,6 +296,7 @@ def predict():
         gap_confidence = parse_confidence(
             request.form.get("gap_confidence", DEFAULT_GAP_CONFIDENCE)
         )
+        alignment_points = json.loads(request.form.get('alignment_points', '[]'))
     except ValueError as exc:
         return error_response(str(exc), 400)
 
@@ -307,6 +311,9 @@ def predict():
     result_filename = f"{uuid.uuid4().hex}.jpg"
     result_path = RESULT_DIR / result_filename
     cleanup_paths = {upload_path, result_path}
+    aligned_filename = f"{Path(result_filename).stem}-aligned.png"
+    aligned_path = RESULT_DIR / aligned_filename
+    cleanup_paths.add(aligned_path)
 
     try:
         image_file.save(upload_path)
@@ -318,8 +325,14 @@ def predict():
         if image is None:
             upload_path.unlink(missing_ok=True)
             return error_response("ไฟล์ที่อัปโหลดไม่ใช่ภาพที่อ่านได้", 400)
+        aligned, alignment = align_image(image, plan, alignment_points)
+        detection_input = upload_path
+        if alignment['applied']:
+            if not cv2.imwrite(str(aligned_path), aligned):
+                raise ModelServiceError('บันทึกภาพหลังจัดแนวไม่สำเร็จ')
+            detection_input = aligned_path
         detection_result = model_service.detect_scene(
-            upload_path, result_path, product_confidence, gap_confidence, plan
+            detection_input, result_path, product_confidence, gap_confidence, plan
         )
     except ValueError as exc:
         for path in cleanup_paths:
@@ -340,6 +353,9 @@ def predict():
             "product_confidence": product_confidence,
             "gap_confidence": gap_confidence,
             **detection_result,
+            "alignment": alignment,
+            "aligned_image_path": f"storage/results/{aligned_filename}" if alignment['applied'] else None,
+            "aligned_image_url": f"{request.host_url.rstrip('/')}/results/{aligned_filename}" if alignment['applied'] else None,
             "input_image_path": f"storage/uploads/{upload_path.name}",
             "result_image_path": f"storage/results/{result_filename}",
             "product_model": model_version(PRODUCT_MODEL_PATH),
@@ -347,6 +363,34 @@ def predict():
             "result_image_url": f"{request.host_url.rstrip('/')}/results/{result_filename}",
         }
     )
+
+
+@app.post('/alignment/preview')
+def alignment_preview():
+    try:
+        plan = json.loads(request.form.get('planogram', 'null'))
+        if not isinstance(plan, dict) or plan.get('id') != request.form.get('planogram_id'):
+            raise ValueError('เลือก Planogram ที่ต้องการจัดแนว')
+        image_file = request.files.get('image')
+        if image_file is None or Path(image_file.filename or '').suffix.lower() not in ALLOWED_EXTENSIONS:
+            raise ValueError('เลือกภาพ JPG, PNG หรือ WEBP')
+        raw = image_file.read(MAX_FILE_SIZE + 1)
+        if not raw or len(raw) > MAX_FILE_SIZE:
+            raise ValueError('ไฟล์ภาพต้องมีขนาดไม่เกิน 10 MB')
+        image = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
+        if image is None:
+            raise ValueError('อ่านภาพอัปโหลดไม่ได้')
+        points = json.loads(request.form.get('alignment_points', '[]'))
+        if not points:
+            raise ValueError('กำหนดจุดบนภาพอัปโหลดให้ครบ 4 จุดก่อนแสดงตัวอย่าง')
+        aligned, alignment = align_image(image, plan, points)
+        ok, encoded = cv2.imencode('.jpg', aligned, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        if not ok:
+            raise ValueError('สร้างภาพตัวอย่างไม่สำเร็จ')
+        return jsonify(success=True, image='data:image/jpeg;base64,' + base64.b64encode(encoded).decode('ascii'),
+                       alignment=alignment, width=aligned.shape[1], height=aligned.shape[0])
+    except (ValueError, TypeError) as exc:
+        return error_response(str(exc), 400)
 
 
 @app.get("/results/<path:filename>")

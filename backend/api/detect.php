@@ -108,15 +108,16 @@ try {
             'gap_confidence' => (string) $gapConfidence,
             'planogram_id' => $requestedPlanId,
             'planogram' => json_encode($plan, JSON_THROW_ON_ERROR),
+            'alignment_points' => (string)($_POST['alignment_points'] ?? '[]'),
         ];
         [$statusCode, $response] = callAiService(
-            AI_SERVICE_URL . '/predict',
+            AI_SERVICE_URL . (isset($_GET['preview']) ? '/alignment/preview' : '/predict'),
             [CURLOPT_POST => true, CURLOPT_POSTFIELDS => $postFields]
         );
     } finally {
         foreach ($tempFiles as $tempFile) @unlink($tempFile);
     }
-    if ($statusCode === 200 && !empty($response['success'])) {
+    if (!isset($_GET['preview']) && $statusCode === 200 && !empty($response['success'])) {
         $resultPlanId = $response['planogram_id'] ?? null;
         if ($resultPlanId !== ($requestedPlanId === '' ? null : $requestedPlanId)) {
             inferenceJsonResponse(['success' => false, 'message' => 'ผลตรวจไม่ตรงกับ Planogram ที่เลือก'], 502);

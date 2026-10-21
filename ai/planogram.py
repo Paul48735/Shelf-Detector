@@ -5,6 +5,7 @@ import time
 
 import cv2
 import numpy as np
+from alignment import validate_corners
 
 
 
@@ -28,9 +29,14 @@ def validate_plan(data, classes):
     except Exception as exc:
         raise ValueError('ภาพอ้างอิงไม่ถูกต้อง') from exc
     cleaned = validate_regions(data, classes)
+    alignment_points = data.get('alignment_points', [])
+    if alignment_points != []:
+        alignment_points = validate_corners(alignment_points, 'ภาพ Planogram')
     return {'version': 1, 'id': f'{time.time_ns():016x}' + uuid.uuid4().hex[16:],
             'name': data['name'].strip(),
             'image': image, 'ratio': frame.shape[1] / frame.shape[0],
+            'reference_width': int(frame.shape[1]), 'reference_height': int(frame.shape[0]),
+            'alignment_points': alignment_points,
             'shelves': cleaned}
 
 

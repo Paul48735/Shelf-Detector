@@ -14,6 +14,7 @@ let plan = {
   name: "ชั้นวาง 2 ชั้น",
   image: "",
   ratio: 1,
+  alignment_points: [],
   shelves: [newShelf("ชั้นบน"), newShelf("ชั้นล่าง")],
 };
 let activeId = null;
@@ -23,6 +24,30 @@ let draggedCorner = null;
 let dirty = false;
 let loadingImage = false;
 let productClasses = [];
+let alignmentMode = window.location.hash === '#alignment';
+const alignmentPicker = new CornerPicker($("planAlignmentPicker"), points => {
+  plan.alignment_points = points;
+  updateAlignmentStatus();
+  changed();
+}, text => message(text, true));
+function updateAlignmentStatus() {
+  const count = (plan.alignment_points || []).length;
+  $("alignmentStatus").textContent = count === 4
+    ? "ครบ 4 จุดแล้ว จุดชุดนี้จะบันทึกพร้อม Planogram"
+    : count ? `เลือกแล้ว ${count}/4 จุด เลือกให้ครบหรือล้างเพื่อข้าม`
+      : "ยังไม่กำหนดจุดอ้างอิง — ใช้ Detect ตามปกติได้";
+  $("undoAlignment").disabled = !count;
+  $("clearAlignment").disabled = !count;
+}
+$("undoAlignment").onclick = () => alignmentPicker.undo();
+$("clearAlignment").onclick = () => alignmentPicker.clear();
+function setEditorMode(alignment) {
+  alignmentMode = alignment;
+  activeId = null; editingId = null; draggedCorner = null; draft = [];
+  showImage();
+}
+$("pickAlignmentMode").onclick = () => setEditorMode(true);
+$("pickProductMode").onclick = () => setEditorMode(false);
 
 async function refreshSavedPlans(selectedId = plan.id) {
   const response = await fetch("../../backend/api/planogram.php?list=1");
@@ -44,6 +69,7 @@ function setPlan(next) {
     name: next.name,
     image: next.image,
     ratio: next.ratio,
+    alignment_points: next.alignment_points || [],
     overlap_threshold: next.overlap_threshold,
     shelves: next.shelves,
   };
@@ -213,11 +239,13 @@ function draw() {
   }
   $("editor").classList.toggle("drawing", !!activeId);
   $("editor").classList.toggle("adjusting", !!editingId);
-  $("undoPoint").disabled = !draft.length;
-  $("cancelDraw").disabled = !activeId;
+  $("undoPoint").disabled = alignmentMode || !draft.length;
+  $("cancelDraw").disabled = alignmentMode || !activeId;
   const shelf = plan.shelves.find((s) => s.id === activeId);
   const editingShelf = plan.shelves.find((s) => s.id === editingId);
-  $("drawHint").textContent = shelf
+  $("drawHint").textContent = alignmentMode
+    ? "โหมดจุดอ้างอิงโครงตู้ — คลิก 4 จุดบนภาพได้เลย แล้วกดบันทึกแผน"
+    : shelf
     ? `${shelf.name}: คลิก 4 มุมตามเข็มหรือทวนเข็มรอบพื้นที่ (${draft.length}/4)`
     : editingShelf
       ? `${editingShelf.name}: ลากจุด 1–4 ให้ตรงขอบชั้น · ใช้ปุ่มลูกศรขยับละเอียด · กรอบจะไม่ยอมให้เส้นตัดกัน`
@@ -274,6 +302,7 @@ function renderShelves() {
     edit.className = "btn btn-outline-primary btn-sm me-2 mb-2";
     edit.disabled = !plan.image || loadingImage;
     edit.onclick = () => {
+      if (alignmentMode) setEditorMode(false);
       activeId = shelf.id;
       editingId = null;
       draggedCorner = null;
@@ -289,6 +318,7 @@ function renderShelves() {
       adjust.disabled = !plan.image || loadingImage || (!!activeId && activeId !== shelf.id);
       adjust.setAttribute("aria-pressed", String(editingId === shelf.id));
       adjust.onclick = () => {
+        if (alignmentMode) setEditorMode(false);
         activeId = null;
         draft = [];
         draggedCorner = null;
@@ -323,10 +353,18 @@ function showImage() {
   $("editor").setAttribute("viewBox", `0 0 1000 ${height}`);
   $("referenceImage").setAttribute("height", height);
   $("referenceImage").setAttribute("href", plan.image);
-  $("editor").hidden = !plan.image;
+  $("editor").hidden = !plan.image || alignmentMode;
   // SVG does not implement HTMLElement.hidden consistently.
-  $("editor").toggleAttribute("hidden", !plan.image);
+  $("editor").toggleAttribute("hidden", !plan.image || alignmentMode);
   $("noImage").hidden = !!plan.image;
+  alignmentPicker.setImage(plan.image, plan.ratio, plan.alignment_points || []);
+  $("planAlignmentPicker").hidden = !plan.image || !alignmentMode;
+  $("alignmentControls").hidden = !alignmentMode;
+  $("pickAlignmentMode").disabled = !plan.image || loadingImage;
+  $("pickAlignmentMode").setAttribute('aria-pressed', String(alignmentMode));
+  $("pickAlignmentMode").className = `btn btn-${alignmentMode ? '' : 'outline-'}primary btn-sm`;
+  $("pickProductMode").hidden = !alignmentMode;
+  updateAlignmentStatus();
   draw();
   renderShelves();
 }
@@ -513,6 +551,7 @@ $("referenceInput").onchange = async (event) => {
     canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
     plan.image = canvas.toDataURL("image/jpeg", 0.8);
     plan.ratio = canvas.width / canvas.height;
+    plan.alignment_points = [];
     plan.shelves.forEach((s) => (s.points = []));
     activeId = null;
     editingId = null;
@@ -530,6 +569,8 @@ $("referenceInput").onchange = async (event) => {
   }
 };
 $("savePlan").onclick = async () => {
+  if (plan.alignment_points?.length && !validAlignmentPoints(plan.alignment_points))
+    return message("จุดอ้างอิงโครงตู้ต้องครบ 4 จุดตามลำดับ หรือกดล้างจุดเพื่อข้าม", true);
   if (activeId)
     return message("วาดให้ครบ 4 มุม หรือยกเลิกการวาดก่อนบันทึก", true);
   if (!plan.image || !plan.name.trim() || !plan.shelves.length)
@@ -617,7 +658,8 @@ try {
 }
 showImage();
 document.querySelector(".workspace").inert = true;
-fetch("../../backend/api/planogram.php")
+const requestedPlanId = new URLSearchParams(window.location.search).get('id');
+fetch("../../backend/api/planogram.php" + (/^[a-f0-9]{32}$/.test(requestedPlanId || '') ? `?id=${encodeURIComponent(requestedPlanId)}` : ''))
   .then(async (response) => {
     const payload = await response.json();
     if (!response.ok || !payload.success)

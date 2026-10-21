@@ -15,7 +15,12 @@ function loadPlan(PDO $db, ?string $id = null, bool $withImage = true): ?array
     $plan = ['id' => $row['id'], 'version' => (int)$row['schema_version'],
         'name' => $row['name'],
         'ratio' => $row['reference_width'] / $row['reference_height'],
+        'reference_width' => (int)$row['reference_width'], 'reference_height' => (int)$row['reference_height'],
         'overlap_threshold' => (float)$row['overlap_threshold'], 'shelves' => []];
+    // Optional metadata lives beside the existing reference image; old plans need no migration.
+    $alignmentPath = dirname(__DIR__, 2) . '/storage/planograms/' . $row['id'] . '.alignment.json';
+    $plan['alignment_points'] = is_file($alignmentPath)
+        ? json_decode(file_get_contents($alignmentPath), true, 8, JSON_THROW_ON_ERROR) : [];
     if ($withImage) {
         $path = dirname(__DIR__, 2) . '/' . $row['reference_image_path'];
         $image = file_get_contents($path);
@@ -48,10 +53,15 @@ function savePlan(PDO $db, array $plan): void
     if (!$size) throw new InvalidArgumentException('Invalid reference image');
     $relative = 'storage/planograms/' . $plan['id'] . '.jpg';
     $path = dirname(__DIR__, 2) . '/' . $relative;
+    $alignmentPath = dirname(__DIR__, 2) . '/storage/planograms/' . $plan['id'] . '.alignment.json';
     if (!is_dir(dirname($path)) && !mkdir(dirname($path), 0775, true)) throw new RuntimeException('Cannot create image directory');
     $db->beginTransaction();
     try {
         if (file_put_contents($path, $bytes, LOCK_EX) !== strlen($bytes)) throw new RuntimeException('Cannot save reference image');
+        $alignmentJson = json_encode($plan['alignment_points'] ?? [], JSON_THROW_ON_ERROR);
+        if (file_put_contents($alignmentPath, $alignmentJson, LOCK_EX) !== strlen($alignmentJson)) {
+            throw new RuntimeException('Cannot save planogram alignment points');
+        }
         $stmt = $db->prepare('INSERT INTO planograms (id,name,schema_version,reference_image_path,reference_width,reference_height) VALUES (?,?,?,?,?,?)');
         $stmt->execute([$plan['id'], $plan['name'], $plan['version'], $relative, $size[0], $size[1]]);
         $stmt = $db->prepare('INSERT INTO planogram_regions (planogram_id,id,name,product_id,product_class,target_quantity,x1,y1,x2,y2,x3,y3,x4,y4) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
@@ -63,6 +73,7 @@ function savePlan(PDO $db, array $plan): void
     } catch (Throwable $error) {
         if ($db->inTransaction()) $db->rollBack();
         if (is_file($path)) unlink($path);
+        if (is_file($alignmentPath)) unlink($alignmentPath);
         throw $error;
     }
 }
@@ -110,10 +121,14 @@ function clearDetectionHistory(PDO $db, string $projectRoot): array
     foreach ($runs as $run) {
         $paths[$run['input_image_path']] = true;
         $paths[$run['result_image_path']] = true;
+        if (preg_match('~^storage/results/([a-f0-9]{32})\.jpg$~D', $run['result_image_path'], $match)) {
+            $paths['storage/results/' . $match[1] . '-aligned.png'] = true;
+        }
     }
     foreach (array_keys($paths) as $relative) {
         // Only files created for detection runs may be removed; planogram images stay intact.
-        if (!preg_match('~^storage/(uploads|results)/[a-f0-9]{32}\.(jpg|jpeg|png|webp)$~iD', $relative)) {
+        if (!preg_match('~^storage/(uploads|results)/[a-f0-9]{32}\.(jpg|jpeg|png|webp)$~iD', $relative)
+            && !preg_match('~^storage/results/[a-f0-9]{32}-aligned\.png$~iD', $relative)) {
             ++$failedFiles;
             continue;
         }

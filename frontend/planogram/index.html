@@ -7,6 +7,7 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
   <link rel="stylesheet" href="../shared/styles.css">
   <link rel="stylesheet" href="planogram.css">
+  <link rel="stylesheet" href="../shared/corner-picker.css?v=20261020-clickfix">
 </head>
 <body class="bg-body-tertiary">
   <main class="container-xxl py-4 py-lg-5">
@@ -57,8 +58,18 @@
             <h2 class="h5 mb-2">กำหนดพื้นที่บนภาพ</h2>
             <p id="drawHint" class="small text-body-secondary">เลือกภาพ แล้วกด “วาดพื้นที่” ของชั้นที่ต้องการ</p>
             <div class="d-flex gap-2 mb-3 flex-wrap">
+              <button id="pickAlignmentMode" class="btn btn-outline-primary btn-sm" type="button">กำหนดจุดอ้างอิงโครงตู้ 4 จุด</button>
+              <button id="pickProductMode" class="btn btn-outline-secondary btn-sm" type="button" hidden>กลับไปวาดพื้นที่สินค้า</button>
               <button id="undoPoint" class="btn btn-outline-secondary btn-sm" type="button" disabled>ย้อนจุดล่าสุด</button>
               <button id="cancelDraw" class="btn btn-outline-secondary btn-sm" type="button" disabled>ยกเลิกการวาด</button>
+            </div>
+            <div id="alignmentControls" hidden>
+              <p class="small text-body-secondary">คลิกบนภาพด้านล่างตามลำดับ บนซ้าย → บนขวา → ล่างขวา → ล่างซ้าย จุดชุดนี้แยกจากกรอบสินค้า ลากจุดหรือใช้ลูกศรเพื่อแก้ไขได้</p>
+              <div class="d-flex gap-2 mb-2">
+                <button id="undoAlignment" class="btn btn-outline-secondary btn-sm" type="button">ย้อนจุดอ้างอิง</button>
+                <button id="clearAlignment" class="btn btn-outline-secondary btn-sm" type="button">ล้างจุดอ้างอิง</button>
+              </div>
+              <p id="alignmentStatus" class="small" role="status">ยังไม่กำหนดจุดอ้างอิง</p>
             </div>
             <div id="referenceStage" class="bg-body-tertiary border rounded-3 overflow-hidden">
               <p id="noImage" class="text-center text-body-secondary p-5 mb-0">ยังไม่มีภาพอ้างอิง</p>
@@ -66,12 +77,14 @@
                 <image id="referenceImage" width="1000" height="1000" preserveAspectRatio="none"></image>
                 <g id="regions"></g>
               </svg>
+              <div id="planAlignmentPicker" hidden></div>
             </div>
           </div>
         </section>
       </div>
     </div>
   </main>
-  <script src="planogram.js?v=20261013-no-alignment"></script>
+  <script src="../shared/corner-picker.js?v=20261020-hitarea"></script>
+  <script src="planogram.js?v=20261020-perspective-clickfix"></script>
 </body>
 </html>
