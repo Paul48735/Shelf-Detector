@@ -5,6 +5,13 @@ CREATE DATABASE IF NOT EXISTS shelf_detection_v2
   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE shelf_detection_v2;
 
+-- Persistent counter for P01, P02, ...; allocate under a transaction row lock.
+CREATE TABLE app_counters (
+  name VARCHAR(50) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+  next_value BIGINT UNSIGNED NOT NULL
+) ENGINE=InnoDB;
+INSERT INTO app_counters (name, next_value) VALUES ('planogram', 1);
+
 CREATE TABLE products (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   product_code VARCHAR(50) NOT NULL UNIQUE,
@@ -14,7 +21,7 @@ CREATE TABLE products (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
--- Each save creates a new immutable plan version (time-ordered ID from Python).
+-- Each save creates a new immutable plan version (P01, P02, ... allocated by PHP).
 -- Keep versions referenced by detection_runs; do not overwrite their regions.
 CREATE TABLE planograms (
   id CHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -31,6 +38,7 @@ CREATE TABLE planograms (
 ) ENGINE=InnoDB;
 
 -- Frontend shelves[].id and gap.shelf_id are REGION identifiers, not stock shelf IDs.
+-- Region IDs are R01, R02, ... within each planogram (composite primary key).
 -- Coordinates are normalized 0..1, in order around a convex four-corner polygon.
 -- The application must also validate convexity and reject crossing edges.
 CREATE TABLE planogram_regions (
@@ -39,7 +47,6 @@ CREATE TABLE planogram_regions (
   name VARCHAR(100) NOT NULL,
   product_id INT UNSIGNED NULL,
   product_class VARCHAR(100) COLLATE utf8mb4_bin NOT NULL COMMENT 'Class snapshot at plan save time',
-  target_quantity SMALLINT UNSIGNED NOT NULL,
   x1 DECIMAL(10,8) NOT NULL, y1 DECIMAL(10,8) NOT NULL,
   x2 DECIMAL(10,8) NOT NULL, y2 DECIMAL(10,8) NOT NULL,
   x3 DECIMAL(10,8) NOT NULL, y3 DECIMAL(10,8) NOT NULL,
@@ -48,7 +55,6 @@ CREATE TABLE planogram_regions (
   UNIQUE KEY uq_region_class (planogram_id, id, product_class),
   CONSTRAINT fk_region_plan FOREIGN KEY (planogram_id) REFERENCES planograms(id) ON DELETE RESTRICT,
   CONSTRAINT fk_region_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL,
-  CONSTRAINT chk_region_target CHECK (target_quantity BETWEEN 1 AND 999),
   CONSTRAINT chk_region_coordinates CHECK (
     x1 BETWEEN 0 AND 1 AND y1 BETWEEN 0 AND 1 AND
     x2 BETWEEN 0 AND 1 AND y2 BETWEEN 0 AND 1 AND

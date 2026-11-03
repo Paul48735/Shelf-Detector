@@ -48,15 +48,20 @@ class ShelfModelService:
                 self._gap_model = self._load(self.gap_model_path, "Gap Model")
             return self._product_model, self._gap_model
 
-    def reload_product_model(self):
+    def reload_product_model(self, path=None):
         with self._model_lock:
-            self._product_model = self._load_product()
+            selected = Path(path) if path is not None else self.product_model_path
+            try:
+                model = ProductDetector(selected, MODEL_ARCHIVE_DIR)
+            except Exception as exc:
+                raise ModelServiceError(f"โหลด Product Model ไม่สำเร็จ: {exc}") from exc
+            self.product_model_path = selected
+            self._product_model = model
 
     def class_names(self) -> list[str]:
         product_model, _ = self._models()
         return [
-            str(product_model.names[index])
-            for index in sorted(product_model.names)
+            str(product_model.names[index]) for index in sorted(product_model.names)
         ]
 
     @staticmethod
@@ -89,49 +94,68 @@ class ShelfModelService:
         x1, y1, x2, y2 = map(int, detection["box"])
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(image.shape[1] - 1, x2), min(image.shape[0] - 1, y2)
-        cv2.rectangle(image, (x1, y1), (x2, y2), color, max(4, round(5 * scale)))
-        if 'ผิด shelf' in label:
-            font_path = Path('C:/Windows/Fonts/tahoma.ttf')
+        cv2.rectangle(image, (x1, y1), (x2, y2), color, max(1.5, round(2.5 * scale)))
+        if "ผิด shelf" in label:
+            font_path = Path("C:/Windows/Fonts/tahoma.ttf")
             if font_path.is_file():
                 canvas = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
                 painter = ImageDraw.Draw(canvas)
                 font = ImageFont.truetype(str(font_path), round(24 * scale))
-                lines = label.split(' | ')
-                line_bboxes = [painter.textbbox((0, 0), line, font=font) for line in lines]
+                lines = label.split(" | ")
+                line_bboxes = [
+                    painter.textbbox((0, 0), line, font=font) for line in lines
+                ]
                 line_heights = [max(1, bbox[3] - bbox[1]) for bbox in line_bboxes]
                 line_widths = [bbox[2] - bbox[0] for bbox in line_bboxes]
                 total_height = sum(line_heights) + 4 * (len(lines) - 1)
                 top = max(0, min(y1 - total_height, image.shape[0] - total_height))
                 width = min(image.shape[1], max(line_widths) + 8)
                 left = max(0, min(x1, image.shape[1] - width))
-                painter.rectangle((left, top, left + width, top + total_height), fill=tuple(reversed(color)))
+                painter.rectangle(
+                    (left, top, left + width, top + total_height),
+                    fill=tuple(reversed(color)),
+                )
                 y = top
                 for i, line in enumerate(lines):
-                    painter.text((left + 4, y), line, font=font, fill='white')
+                    painter.text((left + 4, y), line, font=font, fill="white")
                     y += line_heights[i] + 4
                 image[:] = cv2.cvtColor(np.asarray(canvas), cv2.COLOR_RGB2BGR)
                 return
-            label = label.replace('ผิด shelf', 'WRONG SHELF')
-        (text_width, text_height), _ = cv2.getTextSize(
-            label, cv2.FONT_HERSHEY_SIMPLEX, 0.9 * scale, max(2, round(1.5 * scale))
+            label = label.replace("ผิด shelf", "WRONG SHELF")
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.6 * scale
+        text_thickness = max(1, round(scale))
+        padding = max(2, round(3 * scale))
+        # Measure and render with identical settings, including descenders.
+        (text_width, text_height), baseline = cv2.getTextSize(
+            label, font, font_scale, text_thickness
         )
-        label_top = max(0, y1 - text_height - 10)
-        label_left = max(0, min(x1, image.shape[1] - text_width - 8))
+        available_width = max(1, min(x2 - x1 + 1, image.shape[1]) - 2 * padding)
+        if text_width > available_width:
+            font_scale *= max(1, available_width - text_thickness) / text_width
+            (text_width, text_height), baseline = cv2.getTextSize(
+                label, font, font_scale, text_thickness
+            )
+        label_width = min(image.shape[1], text_width + 2 * padding)
+        label_height = min(image.shape[0], text_height + baseline + 2 * padding)
+        label_top = y1 - label_height if y1 >= label_height else y1
+        label_top = max(0, min(label_top, image.shape[0] - label_height))
+        label_left = max(0, min(x1, image.shape[1] - label_width))
         cv2.rectangle(
             image,
             (label_left, label_top),
-            (label_left + text_width + 8, label_top + text_height + 10),
+            (label_left + label_width - 1, label_top + label_height - 1),
             color,
             -1,
         )
         cv2.putText(
             image,
             label,
-            (label_left + 4, label_top + text_height + 3),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.9 * scale,
+            (label_left + padding, label_top + padding + text_height),
+            font,
+            font_scale,
             (255, 255, 255),
-            max(2, round(1.5 * scale)),
+            text_thickness,
             cv2.LINE_AA,
         )
 
@@ -153,9 +177,13 @@ class ShelfModelService:
             if isinstance(product_model, ProductDetector):
                 products = product_model.predict_detections(image, product_confidence)
             else:
-                products = self._collect(product_model.predict(
-                    source=image, conf=product_confidence, verbose=False,
-                )[0])
+                products = self._collect(
+                    product_model.predict(
+                        source=image,
+                        conf=product_confidence,
+                        verbose=False,
+                    )[0]
+                )
             gap_result = gap_model.predict(
                 source=image,
                 conf=gap_confidence,
@@ -171,22 +199,45 @@ class ShelfModelService:
         )
 
         annotated = image.copy()
+        if plan and plan.get("coordinate_space") == "uploaded-image":
+            for region in plan["shelves"]:
+                polygon = np.asarray(region["points"], dtype=np.float64) * [
+                    image.shape[1],
+                    image.shape[0],
+                ]
+                # Raster drawing uses int32; clipping only protects rendering, not matching geometry.
+                polygon = np.clip(polygon, -1_000_000, 1_000_000).astype(np.int32)
+                cv2.polylines(annotated, [polygon], True, (153, 201, 32), 2)
         products_by_region = {}
         for product in products:
-            association = match_product(product['box'], plan, image.shape[1], image.shape[0])
-            expected = association['expected_class']
-            status = 'unmatched' if expected is None else ('correct' if product['class_name'] == expected else 'wrong-shelf')
-            product.update(expected_class=expected, region_id=association['shelf_id'],
-                           shelf_name=association['shelf_name'], placement_status=status,
-                           association_method=association['association_method'],
-                           overlap_ratio=association.get('overlap_ratio'))
-            if association['shelf_id'] is not None:
-                products_by_region.setdefault(association['shelf_id'], []).append(product)
-            if status == 'wrong-shelf':
-                label = (f"ผิด shelf | Found: {product['class_name']} {product['confidence']:.2f}"
-                         f" | Expected: {expected}")
+            association = match_product(
+                product["box"], plan, image.shape[1], image.shape[0]
+            )
+            expected = association["expected_class"]
+            status = (
+                "unmatched"
+                if expected is None
+                else ("correct" if product["class_name"] == expected else "wrong-shelf")
+            )
+            product.update(
+                expected_class=expected,
+                region_id=association["shelf_id"],
+                shelf_name=association["shelf_name"],
+                placement_status=status,
+                association_method=association["association_method"],
+                overlap_ratio=association.get("overlap_ratio"),
+            )
+            if association["shelf_id"] is not None:
+                products_by_region.setdefault(association["shelf_id"], []).append(
+                    product
+                )
+            if status == "wrong-shelf":
+                label = (
+                    f"ผิด shelf | Found: {product['class_name']} {product['confidence']:.2f}"
+                    f" | Expected: {expected}"
+                )
                 color = (0, 0, 230)
-            elif status == 'correct':
+            elif status == "correct":
                 label = f"{product['class_name']} {product['confidence']:.2f}"
                 color = (41, 211, 163)
             else:
@@ -198,9 +249,11 @@ class ShelfModelService:
         for gap in raw_gaps:
             product_names = []
             visible = False
-            for box, association in split_gap_by_plan(gap["box"], plan, image.shape[1], image.shape[0]):
+            for box, association in split_gap_by_plan(
+                gap["box"], plan, image.shape[1], image.shape[0]
+            ):
                 # A detected product takes precedence over empty space in the same plan region.
-                if association['shelf_id'] in products_by_region:
+                if association["shelf_id"] in products_by_region:
                     continue
                 product_name = association["product_class"]
                 gap_data = {
@@ -214,7 +267,9 @@ class ShelfModelService:
                 if product_name is not None and product_name not in product_names:
                     product_names.append(product_name)
             if visible:
-                label = "GAP" + (" -> " + ", ".join(product_names) if product_names else "")
+                label = "GAP" + (
+                    " - " + ", ".join(product_names) if product_names else ""
+                )
                 self._draw_box(annotated, gap, (0, 88, 255), label)
 
         result_path.parent.mkdir(parents=True, exist_ok=True)
@@ -235,7 +290,9 @@ class ShelfModelService:
             ],
             "product_counts": product_counts,
             "total_products": len(products),
-            "wrong_shelf_count": sum(p['placement_status'] == 'wrong-shelf' for p in products),
+            "wrong_shelf_count": sum(
+                p["placement_status"] == "wrong-shelf" for p in products
+            ),
             "gaps": gaps,
             "total_gaps": len(gaps),
             "identified_gaps": sum(

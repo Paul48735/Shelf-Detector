@@ -2,7 +2,9 @@
   min-height: 11rem;
   border: 2px dashed var(--bs-border-color);
   cursor: pointer;
-  transition: border-color .15s, background-color .15s;
+  transition:
+    border-color 0.15s,
+    background-color 0.15s;
 }
 
 .drop-zone:hover,
@@ -35,9 +37,13 @@
 }
 
 @media (max-width: 991.98px) {
-  .image-stage { min-height: 24rem; }
+  .image-stage {
+    min-height: 24rem;
+  }
 }
 
 @media (max-width: 575.98px) {
-  .image-stage { min-height: 18rem; }
+  .image-stage {
+    min-height: 18rem;
+  }
 }

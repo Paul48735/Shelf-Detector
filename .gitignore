@@ -5,6 +5,8 @@
 # Models already tracked in Git remain tracked.
 /ai/models/*.pt
 /ai/models/archive/
+/ai/models/imported/
+/ai/models/original/
 runs/
 
 # Python environments and caches

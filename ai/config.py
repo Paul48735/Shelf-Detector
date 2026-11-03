@@ -2,6 +2,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# Legacy shared checkpoint, used only to migrate installations to selected-model.json.
 PRODUCT_MODEL_PATH = PROJECT_ROOT / "ai" / "models" / "bestProduct.pt"
 GAP_MODEL_PATH = PROJECT_ROOT / "ai" / "models" / "bestGap.pt"
 

@@ -24,19 +24,14 @@ function imageUrl(path) {
 async function get(url) {
   const response = await fetch(url, { cache: "no-store" });
   const data = await response.json();
-  if (!response.ok || !data.success)
-    throw new Error(data.message || "โหลดข้อมูลไม่สำเร็จ");
+  if (!response.ok || !data.success) throw new Error(data.message || "โหลดข้อมูลไม่สำเร็จ");
   return data.data;
 }
 function clearDetail() {
-  [
-    "totalProducts",
-    "wrongShelf",
-    "totalGaps",
-    "identifiedGaps",
-    "issueCount",
-  ].forEach((id) => ($(id).textContent = "—"));
-  $("runImage").hidden = true;
+  ["totalProducts", "wrongShelf", "totalGaps", "identifiedGaps", "issueCount", "productTypeCount"].forEach(
+    (id) => ($(id).textContent = "—"),
+  );
+  $("runIm age").hidden = true;
   $("runImage").onload = null;
   $("runImage").onerror = null;
   $("runImage").removeAttribute("src");
@@ -45,33 +40,61 @@ function clearDetail() {
   $("imageEmpty").textContent = "ยังไม่มีภาพผลตรวจ";
   $("planBadge").textContent = "ยังไม่ได้เลือกรอบ";
   $("runMeta").textContent = "เลือกรายการจากประวัติเพื่อดูรายละเอียด";
-  $("issues").replaceChildren(
+  $("issues").replaceChildren(node("p", "รอผลตรวจที่เลือก", "small text-body-secondary mb-0"));
+  $("detectedProducts").replaceChildren(
     node("p", "รอผลตรวจที่เลือก", "small text-body-secondary mb-0"),
   );
+}
+function renderProducts(products) {
+  const counts = new Map();
+  products.forEach((product) => {
+    const name = product.class_name || "ไม่ทราบชื่อสินค้า";
+    counts.set(name, (counts.get(name) || 0) + 1);
+  });
+  $("productTypeCount").textContent = `${counts.size} ชนิด`;
+  $("detectedProducts").replaceChildren();
+  if (!counts.size) {
+    $("detectedProducts").append(
+      node("p", "ไม่พบสินค้าในรอบนี้", "small text-body-secondary mb-0"),
+    );
+    return;
+  }
+  const list = node("ul", "", "list-group list-group-flush");
+  counts.forEach((count, name) => {
+    const item = node(
+      "li",
+      "",
+      "list-group-item d-flex align-items-center justify-content-between gap-3 px-0",
+    );
+    item.append(
+      node("span", name, "text-break"),
+      node("span", `${count} ชิ้น`, "badge text-bg-primary rounded-pill flex-shrink-0"),
+    );
+    list.append(item);
+  });
+  $("detectedProducts").append(list);
 }
 async function selectRun(id) {
   const version = ++detailVersion;
   clearDetail();
-  $("loadMessage").textContent = `กำลังโหลดรอบ #${id}…`;
+  $("loadMessage").textContent = `กำลังโหลดรอบ ${id}…`;
   document
     .querySelectorAll("#history tr")
-    .forEach((row) =>
-      row.classList.toggle("table-primary", row.dataset.id === String(id)),
-    );
+    .forEach((row) => row.classList.toggle("table-primary", row.dataset.id === String(id)));
   try {
     const run = await get(`${API}/detections.php?id=${encodeURIComponent(id)}`);
     if (version !== detailVersion) return;
     const checked =
-      run.planogram_id &&
-      !run.products.some((p) => p.placement_status === "unchecked");
+      run.planogram_id && !run.products.some((p) => p.placement_status === "unchecked");
     $("totalProducts").textContent = run.total_products;
-    $("wrongShelf").textContent = checked ? run.wrong_shelf_count : "—";
+    renderProducts(run.products);
+    $("wrongShelf").textContent = checked ? run.wrong_shelf_count : "0";
     $("totalGaps").textContent = run.total_gaps;
     $("identifiedGaps").textContent = run.identified_gaps;
     $("planBadge").textContent = run.planogram_id
-      ? run.planogram_name || "แผนที่บันทึกไว้"
+      ? run.planogram_name || "PLanogram"
       : "ไม่ได้ใช้ Planogram";
-    $("runMeta").textContent = `รอบ #${run.id} · ${date(run.detected_at)}`;
+    $("runMeta").textContent = `รอบ ${run.id} · ${date(run.detected_at)}`;
     const url = imageUrl(run.result_image_path);
     if (url) {
       $("runImage").onload = () => {
@@ -94,17 +117,8 @@ async function selectRun(id) {
     $("issues").replaceChildren();
     let count = 0;
     function issue(title, detail, tone) {
-      const alertTone =
-        tone === "danger"
-          ? "danger"
-          : tone === "warning"
-            ? "warning"
-            : "secondary";
-      const item = node(
-        "article",
-        "",
-        `alert alert-${alertTone} py-2 px-3 mb-2`,
-      );
+      const alertTone = tone === "danger" ? "danger" : tone === "warning" ? "warning" : "secondary";
+      const item = node("article", "", `alert alert-${alertTone} py-2 px-3 mb-2`);
       item.append(node("strong", title), node("p", detail, "small mb-0 mt-1"));
       $("issues").append(item);
       count++;
@@ -112,34 +126,24 @@ async function selectRun(id) {
     run.products.forEach((p) => {
       if (p.placement_status === "wrong-shelf")
         issue(
-          `ผิด shelf · ${p.class_name}`,
-          `ควรเป็น ${p.expected_class} · ${p.region_name || p.region_id}`,
+          `ผิด shelf  ${p.class_name}`,
+          `ควรเป็น ${p.expected_class}  ${p.region_name || p.region_id}`,
           "danger",
         );
       else if (run.planogram_id && p.placement_status === "unchecked")
-        issue(
-          `ตรวจสอบตำแหน่ง · ${p.class_name}`,
-          "ผลเดิมยังไม่ได้ตรวจเทียบตำแหน่ง",
-          "neutral",
-        );
+        issue(`ตรวจสอบตำแหน่ง · ${p.class_name}`, "ผลเดิมยังไม่ได้ตรวจเทียบตำแหน่ง", "neutral");
     });
     run.gaps
       .filter((g) => g.product_class)
       .forEach((g) =>
-        issue(
-          `OutStock· ${g.product_class}`,
-          `พื้นที่ ${g.region_name || g.region_id}`,
-          "warning",
-        ),
+        issue(`OutStock : ${g.product_class}`, `พื้นที่ ${g.region_name || g.region_id}`, "warning"),
       );
     $("issueCount").textContent = `${count} รายการ`;
     if (!count)
       $("issues").append(
         node(
           "p",
-          run.planogram_id
-            ? "ไม่พบรายการที่ต้องแก้ไขในรอบนี้"
-            : "รอบนี้ไม่ได้ตรวจตำแหน่งสินค้า",
+          run.planogram_id ? "ไม่พบรายการที่ต้องแก้ไขในรอบนี้" : " ",
           "small text-body-secondary mb-0",
         ),
       );
@@ -151,7 +155,7 @@ async function selectRun(id) {
           "small text-body-secondary mb-0",
         ),
       );
-    $("loadMessage").textContent = `แสดงผลรอบ ${id}`;
+    $("loadMessage").textContent = `แสดงผลรอบที่ ${id}`;
   } catch (error) {
     if (version === detailVersion)
       $("loadMessage").textContent = `โหลดรายละเอียดไม่ได้: ${error.message}`;
@@ -168,8 +172,7 @@ async function loadHistory() {
   $("previous").disabled = true;
   try {
     const params = new URLSearchParams({ limit: pageSize, offset });
-    if ($("planFilter").value)
-      params.set("planogram_id", $("planFilter").value);
+    if ($("planFilter").value) params.set("planogram_id", $("planFilter").value);
     const rows = await get(`${API}/detections.php?${params}`);
     if (version !== listVersion) return;
     $("previous").disabled = offset === 0;
@@ -189,7 +192,7 @@ async function loadHistory() {
         img.onerror = () => (img.hidden = true);
         preview.append(img);
       }
-      preview.append(node("span", `#${run.id}`));
+      preview.append(node("span", `${run.id}`));
       row.append(preview);
       [
         date(run.detected_at),
@@ -209,8 +212,7 @@ async function loadHistory() {
     if (rows.length) await selectRun(rows[0].id);
     else {
       $("loadMessage").textContent = "ไม่พบผลตรวจในรายการนี้";
-      $("imageEmpty").textContent =
-        "เริ่มต้นด้วยปุ่ม “ตรวจภาพใหม่” หรือเลือกแผนอื่น";
+      $("imageEmpty").textContent = "เริ่มต้นด้วยปุ่ม “ตรวจภาพใหม่” หรือเลือกแผนอื่น";
     }
   } catch (error) {
     if (version === listVersion) {
@@ -225,7 +227,8 @@ $("planFilter").onchange = () => {
 };
 $("refresh").onclick = $("retry").onclick = () => loadHistory();
 $("clearHistory").onclick = async () => {
-  if (!confirm("ลบประวัติการตรวจทั้งหมด รวมถึงภาพอัปโหลดและภาพผลตรวจ? การลบนี้ย้อนกลับไม่ได้")) return;
+  if (!confirm("ลบประวัติและภาพผลตรวจทั้งหมด แล้วเริ่มเลขรอบใหม่ที่ 1? การลบนี้ย้อนกลับไม่ได้"))
+    return;
   const button = $("clearHistory");
   button.disabled = true;
   ++listVersion;
@@ -237,13 +240,11 @@ $("clearHistory").onclick = async () => {
       body: JSON.stringify({ confirm: "clear-all-detections" }),
     });
     const result = await response.json();
-    if (!response.ok || !result.success)
-      throw new Error(result.message || "ล้างประวัติไม่สำเร็จ");
+    if (!response.ok || !result.success) throw new Error(result.message || "ล้างประวัติไม่สำเร็จ");
     offset = 0;
     await loadHistory();
-    const { deleted_runs: runs, failed_files: failed } = result.data;
-    $("loadMessage").textContent = `ลบประวัติ ${runs} รอบแล้ว` +
-      (failed ? ` · ลบไฟล์ภาพไม่ได้ ${failed} ไฟล์ (ตรวจสอบสิทธิ์โฟลเดอร์ storage)` : "");
+    $("loadMessage").textContent =
+      result.data.failed_files ? "ลบประวัติแล้ว แต่ลบภาพบางไฟล์ไม่ได้" : "ลบประวัติแล้ว";
   } catch (error) {
     $("loadMessage").textContent = `ล้างประวัติไม่ได้: ${error.message}`;
   } finally {
@@ -261,10 +262,7 @@ $("previous").onclick = () => {
 get(`${API}/planogram.php?list=1`)
   .then((plans) => {
     plans.forEach((plan) => {
-      const option = node(
-        "option",
-        `${plan.name} · ${date(plan.created_at)} · ${plan.id.slice(0, 8)}`,
-      );
+      const option = node("option", plan.name);
       option.value = plan.id;
       $("planFilter").append(option);
     });

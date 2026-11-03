@@ -1,0 +1,14 @@
+.perspective-preview {
+  position: relative;
+}
+.perspective-preview > img {
+  display: block;
+  width: 100%;
+}
+.perspective-preview > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}

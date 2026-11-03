@@ -2,11 +2,11 @@ const STORAGE_KEY = "shelfVision.planogram.v1";
 const $ = (id) => document.getElementById(id);
 const svgNS = "http://www.w3.org/2000/svg";
 const badgeMeasure = document.createElement("canvas").getContext("2d");
+let regionSequence = 0;
 const newShelf = (name) => ({
-  id: crypto.randomUUID(),
+  id: `R${String(++regionSequence).padStart(2, "0")}`,
   name,
   product: "",
-  target: 3,
   points: [],
 });
 let plan = {
@@ -23,6 +23,31 @@ let draggedCorner = null;
 let dirty = false;
 let loadingImage = false;
 let productClasses = [];
+$("checkArucoReference").onclick = async () => {
+  if (!plan.image || loadingImage) return message("เลือกภาพอ้างอิงก่อนตรวจ ArUco", true);
+  const snapshot = plan.image;
+  $("checkArucoReference").disabled = true;
+  $("arucoReferenceStatus").textContent = "กำลังอ่านป้าย ArUco...";
+  $("arucoReferencePreview").hidden = true;
+  try {
+    const response = await fetch("../../backend/api/aruco.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: snapshot }),
+    });
+    const result = await response.json();
+    if (snapshot !== plan.image) return;
+    if (!response.ok || !result.success) throw new Error(result.message || "ตรวจป้ายไม่สำเร็จ");
+    $("arucoReferenceStatus").textContent =
+      "อ่าน ID 0, 1, 2, 3 ครบแล้ว วาดพื้นที่และบันทึกแผนได้ ตำแหน่งป้ายจะอ่านจากภาพอ้างอิงที่บันทึกไว้";
+    $("arucoReferencePreview").src = result.preview_image;
+    $("arucoReferencePreview").hidden = false;
+  } catch (error) {
+    if (snapshot === plan.image) $("arucoReferenceStatus").textContent = error.message;
+  } finally {
+    $("checkArucoReference").disabled = false;
+  }
+};
 
 async function refreshSavedPlans(selectedId = plan.id) {
   const response = await fetch("../../backend/api/planogram.php?list=1");
@@ -30,14 +55,18 @@ async function refreshSavedPlans(selectedId = plan.id) {
   if (!response.ok || !payload.success) throw new Error(payload.message || "โหลดรายการแผนไม่ได้");
   $("savedPlan").replaceChildren(new Option("แผนใหม่", ""));
   payload.data.forEach((item) => {
-    const savedAt = item.created_at ? item.created_at.replace("T", " ").slice(0, 19) : "";
-    const idSuffix = item.id ? item.id.slice(0, 8) : "";
-    $("savedPlan").append(new Option(`${item.name} · ${savedAt} · ${idSuffix}`, item.id));
+    $("savedPlan").append(new Option(item.name, item.id));
   });
   $("savedPlan").value = selectedId || "";
+  $("deletePlan").disabled = !$("savedPlan").value;
+  if (payload.unavailable_count)
+    message(`มีแผนเก่า ${payload.unavailable_count} รายการที่รูปอ้างอิงหาย จึงเปิดไม่ได้`, true);
 }
 
 function setPlan(next) {
+  regionSequence = Math.max(0, ...next.shelves.map((s) => /^R[0-9]+$/.test(s.id) ? Number(s.id.slice(1)) : 0));
+  $("arucoReferenceStatus").textContent = "";
+  $("arucoReferencePreview").hidden = true;
   plan = {
     id: next.id,
     version: next.version,
@@ -45,7 +74,12 @@ function setPlan(next) {
     image: next.image,
     ratio: next.ratio,
     overlap_threshold: next.overlap_threshold,
-    shelves: next.shelves,
+    shelves: next.shelves.map(({ id, name, product, points }) => ({
+      id,
+      name,
+      product,
+      points,
+    })),
   };
   $("planName").value = plan.name;
   activeId = null;
@@ -59,9 +93,7 @@ function setPlan(next) {
 function message(text, error = false) {
   const status = $("message");
   status.textContent = text;
-  status.className = error
-    ? "alert alert-danger mt-3 mb-0"
-    : "alert alert-info mt-3 mb-0";
+  status.className = error ? "alert alert-danger mt-3 mb-0" : "alert alert-info mt-3 mb-0";
   status.hidden = !text;
 }
 function changed() {
@@ -89,16 +121,13 @@ function validPoints(points) {
 }
 function element(tag, attributes) {
   const node = document.createElementNS(svgNS, tag);
-  Object.entries(attributes).forEach(([key, value]) =>
-    node.setAttribute(key, value),
-  );
+  Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, value));
   return node;
 }
 function draw() {
   $("regions").replaceChildren();
   const height = 1000 / plan.ratio;
-  const coords = (points) =>
-    points.map(([x, y]) => `${x * 1000},${y * height}`).join(" ");
+  const coords = (points) => points.map(([x, y]) => `${x * 1000},${y * height}`).join(" ");
   plan.shelves.forEach((shelf, index) => {
     if (!validPoints(shelf.points)) return;
     const color = shelf.id === activeId ? "#c7f36b" : "#2fd3c5";
@@ -152,7 +181,10 @@ function draw() {
     let nameParts = Array.from(fullName);
     let badgeLabel = `${prefix}${fullName}`;
     if (badgeMeasure.measureText(badgeLabel).width > maxTextWidth) {
-      while (nameParts.length && badgeMeasure.measureText(`${prefix}${nameParts.join("")}…`).width > maxTextWidth) {
+      while (
+        nameParts.length &&
+        badgeMeasure.measureText(`${prefix}${nameParts.join("")}…`).width > maxTextWidth
+      ) {
         nameParts.pop();
       }
       badgeLabel = nameParts.length ? `${prefix}${nameParts.join("")}…` : String(index + 1);
@@ -162,7 +194,7 @@ function draw() {
     const badgeHeight = 26;
     const badgeX = Math.max(2, Math.min(998 - badgeWidth, Math.min(...xs) + 6));
     const badgeY = Math.max(2, Math.min(height - badgeHeight - 2, Math.min(...ys) + 6));
-    const fullLabel = `${index + 1}. ${shelf.name} · ${shelf.product || "ยังไม่เลือกสินค้า"} (${shelf.target})`;
+    const fullLabel = `${index + 1}. ${shelf.name} · ${shelf.product || "ยังไม่เลือกสินค้า"}`;
     const badge = element("g", {
       "pointer-events": "none",
       "aria-label": fullLabel,
@@ -213,14 +245,12 @@ function draw() {
   }
   $("editor").classList.toggle("drawing", !!activeId);
   $("editor").classList.toggle("adjusting", !!editingId);
-  $("undoPoint").disabled = !draft.length;
-  $("cancelDraw").disabled = !activeId;
   const shelf = plan.shelves.find((s) => s.id === activeId);
   const editingShelf = plan.shelves.find((s) => s.id === editingId);
   $("drawHint").textContent = shelf
-    ? `${shelf.name}: คลิก 4 มุมตามเข็มหรือทวนเข็มรอบพื้นที่ (${draft.length}/4)`
+    ? `${shelf.name}: คลิก 4 มุม (${draft.length}/4)`
     : editingShelf
-      ? `${editingShelf.name}: ลากจุด 1–4 ให้ตรงขอบชั้น · ใช้ปุ่มลูกศรขยับละเอียด · กรอบจะไม่ยอมให้เส้นตัดกัน`
+      ? `${editingShelf.name}: ลากจุด 1–4 ให้ตรงขอบชั้น `
       : "กด “วาดพื้นที่” เพื่อกำหนดกรอบ หรือ “แก้ไขกรอบ” เพื่อขยับจุดของพื้นที่เดิม";
 }
 function renderShelves() {
@@ -238,7 +268,6 @@ function renderShelves() {
     [
       ["ชื่อพื้นที่", "name"],
       ["สินค้า (ชื่อคลาสโมเดล)", "product"],
-      ["จำนวนเป้าหมายที่มองเห็นด้านหน้า", "target"],
     ].forEach(([title, key]) => {
       const label = document.createElement("label");
       label.textContent = title;
@@ -251,16 +280,12 @@ function renderShelves() {
         if (shelf.product && !productClasses.includes(shelf.product))
           input.append(new Option(`${shelf.product} (คลาสเดิม)`, shelf.product));
       } else {
-        input.type = key === "target" ? "number" : "text";
-        if (key === "target") {
-          input.min = "1";
-          input.max = "999";
-          input.step = "1";
-        } else input.maxLength = 100;
+        input.type = "text";
+        input.maxLength = 100;
       }
       input.value = shelf[key];
       input.addEventListener(key === "product" ? "change" : "input", () => {
-        shelf[key] = key === "target" ? Number(input.value) : input.value;
+        shelf[key] = input.value;
         changed();
         draw();
       });
@@ -268,9 +293,7 @@ function renderShelves() {
       body.append(label);
     });
     const edit = document.createElement("button");
-    edit.textContent = validPoints(shelf.points)
-      ? "วาดพื้นที่ใหม่ ✓"
-      : "วาดพื้นที่";
+    edit.textContent = validPoints(shelf.points) ? "วาดพื้นที่ใหม่ ✓" : "วาดพื้นที่";
     edit.className = "btn btn-outline-primary btn-sm me-2 mb-2";
     edit.disabled = !plan.image || loadingImage;
     edit.onclick = () => {
@@ -432,18 +455,6 @@ $("editor").addEventListener("keydown", (event) => {
   );
   nextHandle?.focus();
 });
-$("undoPoint").onclick = () => {
-  draft.pop();
-  draw();
-};
-$("cancelDraw").onclick = () => {
-  activeId = null;
-  editingId = null;
-  draggedCorner = null;
-  draft = [];
-  renderShelves();
-  draw();
-};
 $("addShelf").onclick = () => {
   activeId = null;
   editingId = null;
@@ -459,9 +470,11 @@ $("planName").oninput = () => {
 };
 $("savedPlan").onchange = async () => {
   const id = $("savedPlan").value;
+  $("deletePlan").disabled = !id;
   if (!id) return;
   if ((dirty || draft.length) && !confirm("มีการแก้ไขที่ยังไม่บันทึก ต้องการเปิดแผนอื่นหรือไม่?")) {
     $("savedPlan").value = plan.id || "";
+    $("deletePlan").disabled = !$("savedPlan").value;
     return;
   }
   try {
@@ -471,19 +484,62 @@ $("savedPlan").onchange = async () => {
       throw new Error(payload.message || "เปิดแผนไม่สำเร็จ");
     setPlan(payload.data);
     message(`เปิดแผน ${plan.name} แล้ว`);
-  } catch (error) { message(error.message, true); }
+  } catch (error) {
+    message(error.message, true);
+  }
+};
+$("deletePlan").onclick = async () => {
+  const id = $("savedPlan").value;
+  if (!id) return;
+  const selected = $("savedPlan").selectedOptions[0]?.textContent || "แผนที่เลือก";
+  const pending = dirty || draft.length ? " การแก้ไขที่ยังไม่บันทึกจะถูกทิ้งด้วย" : "";
+  if (!confirm(`ยืนยันลบ ${selected} หรือไม่?${pending}`)) return;
+  $("deletePlan").disabled = true;
+  try {
+    const response = await fetch(`../../backend/api/planogram.php?id=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) throw new Error(payload.message || "ลบแผนไม่สำเร็จ");
+    if (plan.id === id) {
+      regionSequence = 0;
+      setPlan({
+        version: 1,
+        name: "แผนใหม่",
+        image: "",
+        ratio: 1,
+        shelves: [newShelf("ชั้นบน"), newShelf("ชั้นล่าง")],
+      });
+    }
+    $("savedPlan").value = "";
+    await refreshSavedPlans("");
+    message("ลบแผนแล้ว");
+  } catch (error) {
+    message(error.message, true);
+    $("deletePlan").disabled = !$("savedPlan").value;
+  }
 };
 $("newPlan").onclick = () => {
-  if ((dirty || draft.length) && !confirm("มีการแก้ไขที่ยังไม่บันทึก ต้องการสร้างแผนใหม่หรือไม่?")) return;
-  setPlan({version: 1, name: "แผนใหม่",
-    image: "", ratio: 1, shelves: [newShelf("ชั้นบน"), newShelf("ชั้นล่าง")]});
+  if ((dirty || draft.length) && !confirm("มีการแก้ไขที่ยังไม่บันทึก ต้องการสร้างแผนใหม่หรือไม่?"))
+    return;
+  regionSequence = 0;
+  setPlan({
+    version: 1,
+    name: "แผนใหม่",
+    image: "",
+    ratio: 1,
+    shelves: [newShelf("ชั้นบน"), newShelf("ชั้นล่าง")],
+  });
   $("savedPlan").value = "";
+  $("deletePlan").disabled = true;
   changed();
 };
 $("referenceInput").onchange = async (event) => {
   const file = event.target.files[0];
   event.target.value = "";
   if (!file) return;
+  $("arucoReferenceStatus").textContent = "";
+  $("arucoReferencePreview").hidden = true;
   if (
     !["image/jpeg", "image/png", "image/webp"].includes(file.type) ||
     file.size > 10 * 1024 * 1024
@@ -503,10 +559,7 @@ $("referenceInput").onchange = async (event) => {
     const image = new Image();
     image.src = url;
     await image.decode();
-    const scale = Math.min(
-      1,
-      1400 / Math.max(image.naturalWidth, image.naturalHeight),
-    );
+    const scale = Math.min(1, 1400 / Math.max(image.naturalWidth, image.naturalHeight));
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
@@ -530,8 +583,7 @@ $("referenceInput").onchange = async (event) => {
   }
 };
 $("savePlan").onclick = async () => {
-  if (activeId)
-    return message("วาดให้ครบ 4 มุม หรือยกเลิกการวาดก่อนบันทึก", true);
+  if (activeId) return message("วาดให้ครบ 4 มุม หรือยกเลิกการวาดก่อนบันทึก", true);
   if (!plan.image || !plan.name.trim() || !plan.shelves.length)
     return message("กรุณาระบุชื่อแผน ภาพ และพื้นที่อย่างน้อย 1 ชั้น", true);
   if (
@@ -539,16 +591,10 @@ $("savePlan").onclick = async () => {
       (s) =>
         !s.name.trim() ||
         !s.product.trim() ||
-        !Number.isInteger(s.target) ||
-        s.target < 1 ||
-        s.target > 999 ||
         !validPoints(s.points),
     )
   )
-    return message(
-      "ทุกชั้นต้องมีชื่อ สินค้า จำนวนเต็ม 1–999 และกรอบครบ 4 มุม",
-      true,
-    );
+    return message("ทุกพื้นที่ต้องมีชื่อ สินค้า และกรอบครบ 4 มุม", true);
   if (plan.shelves.some((s) => !productClasses.includes(s.product)))
     return message("กรุณาเลือกคลาสสินค้าจากรายการที่โหลดได้", true);
   const snapshot = JSON.stringify(plan);
@@ -560,18 +606,14 @@ $("savePlan").onclick = async () => {
       body: snapshot,
     });
     const payload = await response.json();
-    if (!response.ok || !payload.success)
-      throw new Error(payload.message || "บันทึกแผนไม่สำเร็จ");
+    if (!response.ok || !payload.success) throw new Error(payload.message || "บันทึกแผนไม่สำเร็จ");
     if (JSON.stringify(plan) === snapshot) {
       setPlan(payload.data);
       message(`บันทึกแผน ${plan.name} แล้ว`);
       refreshSavedPlans(plan.id).catch(() =>
         message("บันทึกแผนแล้ว แต่โหลดรายการแผนล่าสุดไม่ได้", true),
       );
-    } else
-      message(
-        "บันทึกข้อมูลก่อนแก้ไขแล้ว ยังมีการเปลี่ยนแปลงที่ต้องบันทึกอีกครั้ง",
-      );
+    } else message("บันทึกข้อมูลก่อนแก้ไขแล้ว ยังมีการเปลี่ยนแปลงที่ต้องบันทึกอีกครั้ง");
   } catch (error) {
     message(error.message, true);
   } finally {
@@ -602,9 +644,6 @@ try {
           typeof s.id === "string" &&
           typeof s.name === "string" &&
           typeof s.product === "string" &&
-          Number.isInteger(s.target) &&
-          s.target >= 1 &&
-          s.target <= 999 &&
           validPoints(s.points),
       )
     )
@@ -617,17 +656,24 @@ try {
 }
 showImage();
 document.querySelector(".workspace").inert = true;
-fetch("../../backend/api/planogram.php")
+const requestedPlanId = new URLSearchParams(window.location.search).get("id");
+fetch(
+  "../../backend/api/planogram.php" +
+    (/^P(?:0[1-9]|[1-9][0-9]{1,17})$/.test(requestedPlanId || "")
+      ? `?id=${encodeURIComponent(requestedPlanId)}`
+      : ""),
+)
   .then(async (response) => {
     const payload = await response.json();
-    if (!response.ok || !payload.success)
-      throw new Error(payload.message || "โหลดแผนไม่สำเร็จ");
+    if (!response.ok || !payload.success) throw new Error(payload.message || "โหลดแผนไม่สำเร็จ");
     if (payload.data) {
       setPlan(payload.data);
       message("โหลดแผนจากหลังบ้านแล้ว");
     } else if (plan.image) {
       dirty = true;
       message("พบแผนเดิมในเบราว์เซอร์ กรุณากดบันทึกเพื่อส่งไปหลังบ้าน");
+    } else {
+      message("ไม่พบแผนที่เปิดได้ กรุณาสร้างแผนใหม่และเลือกรูปอ้างอิง");
     }
   })
   .then(() => refreshSavedPlans())
@@ -649,7 +695,10 @@ async function loadProductClasses() {
       const payload = await response.json();
       if (!response.ok || !payload.success || !Array.isArray(payload.data) || !payload.data.length)
         throw new Error("โหลดคลาสจากฐานข้อมูลไม่ได้");
-      productClasses = payload.data.slice().reverse().map((product) => product.yolo_class_name);
+      productClasses = payload.data
+        .slice()
+        .reverse()
+        .map((product) => product.yolo_class_name);
       source = "ฐานข้อมูลสินค้า";
     } catch {
       $("classStatus").textContent = "โหลดรายชื่อคลาสไม่ได้ กรุณาตรวจสอบ AI service และฐานข้อมูล";
@@ -658,6 +707,6 @@ async function loadProductClasses() {
   }
   productClasses = [...new Set(productClasses.filter((name) => typeof name === "string" && name))];
   renderShelves();
-  $("classStatus").textContent = `เลือกได้ ${productClasses.length} คลาสจาก${source}`;
+  $("classStatus").textContent = `เลือกได้ ${productClasses.length} Class`;
 }
 loadProductClasses();

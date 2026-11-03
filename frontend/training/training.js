@@ -145,14 +145,16 @@ async function uploadPendingBatch(files) {
   await loadDataset();
   input.disabled = false;
   if (pendingRouteUnavailable) {
-    status.textContent = "AI service ยังไม่มี API อัปโหลดเป็นชุด · หยุด service เดิมแล้วรัน python ai/app.py ใหม่";
+    status.textContent =
+      "AI service ยังไม่มี API อัปโหลดเป็นชุด · หยุด service เดิมแล้วรัน python ai/app.py ใหม่";
     status.className = "small text-danger mb-3";
   } else if (failures.length) {
-    status.textContent = "อัปโหลดสำเร็จ " + uploadedCount + "/" + files.length
-      + " ภาพ · " + failures.join(" · ");
+    status.textContent =
+      "อัปโหลดสำเร็จ " + uploadedCount + "/" + files.length + " ภาพ · " + failures.join(" · ");
     status.className = "small text-danger mb-3";
   } else {
-    status.textContent = "อัปโหลดครบ " + files.length + " ภาพแล้ว · คลิก “ติดป้ายกำกับ” ในรายการภาพก่อน Fine-tune";
+    status.textContent =
+      "อัปโหลดครบ " + files.length + " ภาพแล้ว · คลิก “ติดป้ายกำกับ” ในรายการภาพก่อน Fine-tune";
     status.className = "small text-success mb-3";
   }
 }
@@ -169,16 +171,19 @@ function updateEditorState() {
   $("saveImage").textContent = editingId
     ? "บันทึกป้ายกำกับ"
     : pendingFiles.length > 1 && pendingIndex < pendingFiles.length - 1
-      ? "บันทึกและไปภาพถัดไป" : "บันทึกภาพและป้ายกำกับ";
+      ? "บันทึกและไปภาพถัดไป"
+      : "บันทึกภาพและป้ายกำกับ";
   $("undoBox").disabled = annotations.length === 0;
   $("cancelEdit").hidden = !editingId && pendingFiles.length === 0;
   $("cancelEdit").textContent = editingId ? "ยกเลิกแก้ไข" : "ยกเลิกชุดภาพ";
   $("skipImage").hidden = pendingFiles.length < 2;
-  const queueProgress = pendingFiles.length > 1
-    ? `ภาพ ${pendingIndex + 1}/${pendingFiles.length} · ` : "";
+  const queueProgress =
+    pendingFiles.length > 1 ? `ภาพ ${pendingIndex + 1}/${pendingFiles.length} · ` : "";
   if (!currentImage) setEditorMessage(queueProgress + "เลือกภาพก่อนเริ่มวาดกรอบ");
-  else if (!$("classSelect").value) setEditorMessage(queueProgress + "เลือกคลาสสินค้า แล้วลากกรอบครอบสินค้าแต่ละชิ้น");
-  else setEditorMessage(queueProgress + `ลากกรอบครอบสินค้า · บันทึกแล้ว ${annotations.length} กรอบ`);
+  else if (!$("classSelect").value)
+    setEditorMessage(queueProgress + "เลือกคลาสสินค้า แล้วลากกรอบครอบสินค้าแต่ละชิ้น");
+  else
+    setEditorMessage(queueProgress + `ลากกรอบครอบสินค้า · บันทึกแล้ว ${annotations.length} กรอบ`);
 }
 
 function renderAnnotationList() {
@@ -244,8 +249,9 @@ $("imageInput").addEventListener("change", async (event) => {
   const files = Array.from(event.target.files || []);
   event.target.value = "";
   if (!files.length) return;
-  const invalidFile = files.find((file) =>
-    !["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > MAX_FILE_SIZE
+  const invalidFile = files.find(
+    (file) =>
+      !["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > MAX_FILE_SIZE,
   );
   if (invalidFile) {
     const reason = !["image/jpeg", "image/png", "image/webp"].includes(invalidFile.type)
@@ -253,8 +259,11 @@ $("imageInput").addEventListener("change", async (event) => {
       : "ภาพแต่ละไฟล์ต้องมีขนาดไม่เกิน 10 MB";
     return setEditorMessage(invalidFile.name + ": " + reason, true);
   }
-  if ((annotations.length || editingId || pendingFiles.length > 1)
-      && !confirm("ยกเลิกงานภาพปัจจุบัน แล้วเลือกชุดภาพใหม่หรือไม่?")) return;
+  if (
+    (annotations.length || editingId || pendingFiles.length > 1) &&
+    !confirm("ยกเลิกงานภาพปัจจุบัน แล้วเลือกชุดภาพใหม่หรือไม่?")
+  )
+    return;
   if (files.length > 1) {
     resetEditor();
     await uploadPendingBatch(files);
@@ -273,7 +282,9 @@ $("undoBox").addEventListener("click", () => {
 $("cancelEdit").addEventListener("click", () => {
   const canceledQueue = pendingFiles.length > 0;
   resetEditor();
-  if (canceledQueue) $("datasetMessage").textContent = "ยกเลิกชุดภาพแล้ว";
+  $("datasetMessage").textContent = canceledQueue
+    ? "ยกเลิกชุดภาพแล้ว"
+    : "ยกเลิกแก้ไขป้ายกำกับแล้ว";
 });
 $("skipImage").addEventListener("click", () => {
   if (pendingFiles.length < 2) return;
@@ -333,8 +344,13 @@ $("saveImage").addEventListener("click", async () => {
     } else if (pendingFiles.length > 1 && pendingIndex + 1 < pendingFiles.length) {
       pendingIndex += 1;
       showQueuedFile();
-      $("datasetMessage").textContent = "บันทึก " + result.filename + " แล้ว · กำลังทำภาพ "
-        + (pendingIndex + 1) + "/" + pendingFiles.length;
+      $("datasetMessage").textContent =
+        "บันทึก " +
+        result.filename +
+        " แล้ว · กำลังทำภาพ " +
+        (pendingIndex + 1) +
+        "/" +
+        pendingFiles.length;
     } else {
       resetEditor();
       $("datasetMessage").textContent = "บันทึก " + result.filename + " แล้ว";
@@ -351,8 +367,11 @@ $("saveImage").addEventListener("click", async () => {
 });
 
 async function openSample(id) {
-  if ((annotations.length || editingId || pendingFiles.length > 1)
-      && !confirm("ยกเลิกงานภาพปัจจุบัน แล้วเปิดภาพชุดฝึกนี้หรือไม่?")) return;
+  if (
+    (annotations.length || editingId || pendingFiles.length > 1) &&
+    !confirm("ยกเลิกงานภาพปัจจุบัน แล้วเปิดภาพชุดฝึกนี้หรือไม่?")
+  )
+    return;
   try {
     const sample = await requestJson(`${API}?action=image&id=${encodeURIComponent(id)}`);
     pendingFiles = [];
@@ -392,32 +411,41 @@ function renderDataset() {
   const labeledCount = samples.filter((row) => row.annotation_count > 0).length;
   const pendingCount = samples.length - labeledCount;
   const totalBoxes = samples.reduce((sum, row) => sum + row.annotation_count, 0);
-  const classImageCounts = Object.fromEntries(classes.map((name) => [name,
-    samples.filter((row) => (row.class_counts?.[name] || 0) > 0).length]));
+  const classImageCounts = Object.fromEntries(
+    classes.map((name) => [
+      name,
+      samples.filter((row) => (row.class_counts?.[name] || 0) > 0).length,
+    ]),
+  );
   const labeledClasses = classes.filter((name) => classImageCounts[name] > 0);
   const insufficient = labeledClasses.filter((name) => classImageCounts[name] < 4);
-  $("datasetSummary").textContent = `${samples.length} ภาพ · ติดป้ายแล้ว ${labeledCount} · รอติดป้าย ${pendingCount} · ${totalBoxes} กรอบสินค้า`;
+  $("datasetSummary").textContent = `${samples.length} ภาพ / Labelแล้ว ${labeledCount}  `;
   $("trainingClasses").textContent = labeledClasses.length
-    ? labeledClasses.join(", ") : "ยังไม่มีคลาสที่ติดป้าย";
+    ? labeledClasses.join(", ")
+    : "ยังไม่มีคลาสที่ติดป้าย";
   $("trainingReadiness").textContent = !labeledClasses.length
-    ? "ติดป้ายสินค้าในภาพก่อนเริ่ม Fine-tune"
+    ? "Label สินค้าในภาพก่อนเริ่ม Fine-tune"
     : insufficient.length
-      ? `ต้องมีอย่างน้อย 4 ภาพต่อคลาส · ยังขาด: ${insufficient.map((name) => `${name} ${classImageCounts[name]}/4`).join(", ")}`
-      : `${labeledCount} ภาพ · ${labeledClasses.length} คลาสพร้อมฝึกพร้อมกัน (ควรมีภาพจริงมากกว่า 4 ภาพต่อคลาส)`;
-  $("startTraining").disabled = !labeledClasses.length || insufficient.length > 0
-    || ["queued", "running"].includes(window.latestTrainingStatus);
+      ? `ต้องมีอย่างน้อย 4 ภาพต่อคลาส  ยังขาด: ${insufficient.map((name) => `${name} ${classImageCounts[name]}/4`).join(", ")}`
+      : `${labeledCount} ภาพ  ${labeledClasses.length} คลาสพร้อมฝึกพร้อมกัน (ควรมีภาพจริงมากกว่า 4 ภาพต่อคลาส)`;
+  $("startTraining").disabled =
+    !labeledClasses.length ||
+    insufficient.length > 0 ||
+    ["queued", "running", "cancelling"].includes(window.latestTrainingStatus);
 
   const totals = Object.fromEntries(classes.map((name) => [name, 0]));
-  samples.forEach((row) => Object.entries(row.class_counts).forEach(([name, count]) => {
-    totals[name] = (totals[name] || 0) + count;
-  }));
+  samples.forEach((row) =>
+    Object.entries(row.class_counts).forEach(([name, count]) => {
+      totals[name] = (totals[name] || 0) + count;
+    }),
+  );
   const coverage = $("classCoverage");
   coverage.replaceChildren();
   classes.forEach((name) => {
     const item = document.createElement("div");
     item.className = "coverage-item";
     item.textContent = `${name}: ${totals[name] || 0}`;
-    item.title = `${name} · ${totals[name] || 0} กรอบ`;
+    item.title = `${name}  ${totals[name] || 0} กรอบ`;
     coverage.append(item);
   });
 
@@ -440,9 +468,8 @@ function renderDataset() {
     name.textContent = sample.filename;
     const count = document.createElement("small");
     count.className = "text-body-secondary";
-    count.textContent = sample.annotation_count > 0
-      ? `${sample.annotation_count} กรอบ · ${sample.width}×${sample.height}`
-      : `รอติดป้ายกำกับ · ${sample.width}×${sample.height}`;
+    count.textContent =
+      sample.annotation_count > 0 ? `${sample.annotation_count} กรอบ` : "รอติดป้ายกำกับ";
     detail.append(name, count);
     const edit = document.createElement("button");
     edit.type = "button";
@@ -467,7 +494,9 @@ async function deleteSample(sample, button) {
   if (!confirm(`ลบภาพ “${sample.filename}” และป้ายกำกับทั้งหมดของภาพนี้หรือไม่?`)) return;
   button.disabled = true;
   try {
-    await requestJson(`${API}?action=image&id=${encodeURIComponent(sample.id)}`, { method: "DELETE" });
+    await requestJson(`${API}?action=image&id=${encodeURIComponent(sample.id)}`, {
+      method: "DELETE",
+    });
     if (editingId === sample.id) resetEditor();
     await loadDataset();
     $("datasetMessage").textContent = `ลบภาพ ${sample.filename} แล้ว`;
@@ -482,13 +511,22 @@ async function deleteSample(sample, button) {
 $("refreshDataset").addEventListener("click", loadDataset);
 
 const jobLabels = {
-  queued: "รอเริ่ม", running: "กำลังฝึก", completed: "ฝึกเสร็จแล้ว",
-  activated: "เปิดใช้แล้ว", failed: "ฝึกไม่สำเร็จ", interrupted: "หยุดกลางคัน",
+  queued: "รอเริ่ม",
+  running: "กำลังฝึก",
+  cancelling: "กำลังยกเลิก",
+  cancelled: "ยกเลิกแล้ว",
+  completed: "ฝึกเสร็จแล้ว",
+  activated: "เปิดใช้แล้ว",
+  failed: "ฝึกไม่สำเร็จ",
+  interrupted: "หยุดกลางคัน",
   deleted: "ลบโมเดลแล้ว",
 };
 
 function renderJob(job) {
   if (!job) {
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = null;
+    currentJobId = null;
     $("jobPanel").hidden = true;
     window.latestTrainingStatus = "";
     renderDataset();
@@ -498,28 +536,23 @@ function renderJob(job) {
   window.latestTrainingStatus = job.status;
   $("jobPanel").hidden = false;
   $("jobStatus").textContent = `${jobLabels[job.status] || job.status} · ${job.id.slice(0, 8)}`;
-  $("jobProgressText").textContent = job.status === "running" || job.status === "completed"
-    ? `Epoch ${job.epoch}/${job.epochs}` : "";
+  $("jobProgressText").textContent =
+    job.status === "running" || job.status === "completed"
+      ? `Epoch ${job.epoch}/${job.epochs}`
+      : "";
   $("jobProgress").style.width = `${job.progress || 0}%`;
   $("jobProgress").parentElement.setAttribute("aria-valuenow", String(job.progress || 0));
-  $("jobProgress").classList.toggle("progress-bar-animated", ["queued", "running"].includes(job.status));
+  $("jobProgress").classList.toggle(
+    "progress-bar-animated",
+    ["queued", "running", "cancelling"].includes(job.status),
+  );
+  $("cancelTraining").hidden = !["queued", "running", "cancelling"].includes(job.status);
+  $("cancelTraining").disabled = job.status === "cancelling";
+  $("cancelTraining").textContent = job.status === "cancelling" ? "กำลังยกเลิก…" : "ยกเลิกการฝึก";
   $("jobMessage").textContent = job.message || "";
-  const metricEntries = Object.entries(job.metrics || {}).slice(0, 8);
-  const comparison = job.comparison;
-  const baseline = job.baseline_metrics?.["target/mAP50-95"];
-  const candidate = job.metrics?.["target/mAP50-95"];
-  const scoreText = comparison
-    ? `mAP50–95 เฉลี่ยของ ${job.target_classes?.length || 1} คลาสที่ฝึก: เดิม ${baseline} → ใหม่ ${candidate} · Δ ${comparison.target_map_delta}`
-    : "";
-  const warnings = job.dataset?.warnings || [];
-  $("jobMetrics").textContent = [
-    metricEntries.length
-      ? `Validation ตัวเสริม: ${metricEntries.map(([key, value]) => `${key} ${value}`).join(" · ")}` : "",
-    scoreText, ...warnings,
-  ].filter(Boolean).join(" · ");
   renderDataset();
   if (job.status === "completed") loadModels("job:" + job.id);
-  if (["queued", "running"].includes(job.status)) schedulePoll();
+  if (["queued", "running", "cancelling"].includes(job.status)) schedulePoll();
   else if (pollTimer) clearTimeout(pollTimer);
 }
 
@@ -539,7 +572,7 @@ function renderModels(preferredId = "") {
   });
   select.value = availableModels.some((model) => model.id === previousId)
     ? previousId
-    : (availableModels.find((model) => model.current)?.id || availableModels[0].id);
+    : availableModels.find((model) => model.current)?.id || availableModels[0].id;
   updateModelSelection();
 }
 
@@ -549,8 +582,8 @@ function updateModelSelection() {
   $("deleteSelectedModel").disabled = !selected || selected.current || !selected.deletable;
   if (selected) {
     $("modelMessage").textContent = selected.current
-      ? "กำลังใช้โมเดลนี้อยู่ · " + selected.model_hash.slice(0, 12)
-      : "เลือกไว้ · " + selected.model_hash.slice(0, 12) + " · ยังไม่ได้เปิดใช้";
+      ? "กำลังใช้โมเดลนี้อยู่ · " + selected.label
+      : "เลือกไว้ · " + selected.label + " · ยังไม่ได้เปิดใช้";
   }
 }
 
@@ -563,17 +596,21 @@ async function loadModels(preferredId = "") {
     $("modelSelect").replaceChildren(new Option("โหลดรายการโมเดลไม่สำเร็จ", ""));
     $("activateSelectedModel").disabled = true;
     $("deleteSelectedModel").disabled = true;
-    $("modelMessage").textContent = error.message === "ไม่พบ endpoint ที่ร้องขอ"
-      ? "AI service ยังไม่โหลด API เลือกโมเดล ให้หยุด service เดิมแล้วรัน python ai/app.py ใหม่"
-      : error.message;
+    $("modelMessage").textContent =
+      error.message === "ไม่พบ endpoint ที่ร้องขอ"
+        ? "AI service ยังไม่โหลด API เลือกโมเดล ให้หยุด service เดิมแล้วรัน python ai/app.py ใหม่"
+        : error.message;
     $("modelMessage").className = "small text-danger mt-2 mb-0";
   }
 }
 
-async function refreshJob() {
+async function refreshJob({ restore = false } = {}) {
   try {
-    const job = await requestJson(`${API}?action=job${currentJobId ? `&id=${encodeURIComponent(currentJobId)}` : ""}`);
-    renderJob(job);
+    const job = await requestJson(
+      `${API}?action=job${currentJobId ? `&id=${encodeURIComponent(currentJobId)}` : ""}`,
+    );
+    // Keep cancellation feedback in this session without restoring it on page reload.
+    renderJob(restore && job?.status === "cancelled" ? null : job);
   } catch (error) {
     $("jobMessage").textContent = `โหลดสถานะงานไม่ได้: ${error.message}`;
   }
@@ -586,10 +623,26 @@ function schedulePoll() {
   }, 2500);
 }
 
+$("cancelTraining").addEventListener("click", async () => {
+  if (!currentJobId) return;
+  $("cancelTraining").disabled = true;
+  try {
+    const job = await requestJson(`${API}?action=cancel&id=${encodeURIComponent(currentJobId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    renderJob(job);
+  } catch (error) {
+    await refreshJob();
+    $("jobMessage").textContent = error.message;
+  }
+});
+
 $("startTraining").addEventListener("click", async () => {
   const epochs = Number($("epochs").value);
   if (!Number.isInteger(epochs) || epochs < 5 || epochs > 100)
-    return $("trainingReadiness").textContent = "ตั้ง epochs ได้ตั้งแต่ 5 ถึง 100";
+    return ($("trainingReadiness").textContent = "ตั้ง epochs ได้ตั้งแต่ 5 ถึง 100");
   const button = $("startTraining");
   button.disabled = true;
   try {
@@ -612,7 +665,8 @@ $("refreshModels").addEventListener("click", () => loadModels());
 $("activateSelectedModel").addEventListener("click", async () => {
   const selected = availableModels.find((model) => model.id === $("modelSelect").value);
   if (!selected || selected.current) return;
-  if (!confirm("เปิดใช้ “" + selected.label + "” หรือไม่? โมเดลที่ใช้อยู่จะถูกเก็บเป็นข้อมูลสำรอง")) return;
+  if (!confirm("เปิดใช้ “" + selected.label + "” หรือไม่? ระบบจะโหลดไฟล์นี้โดยตรง"))
+    return;
   const button = $("activateSelectedModel");
   button.disabled = true;
   try {
@@ -622,7 +676,7 @@ $("activateSelectedModel").addEventListener("click", async () => {
       body: JSON.stringify({ model_id: selected.id }),
     });
     await loadModels();
-    $("modelMessage").textContent = result.message + " · " + result.active_model.slice(0, 12);
+    $("modelMessage").textContent = result.message + " · " + result.model_filename;
     $("modelMessage").className = "small text-success mt-2 mb-0";
   } catch (error) {
     $("modelMessage").textContent = error.message;
@@ -634,7 +688,7 @@ $("activateSelectedModel").addEventListener("click", async () => {
 $("deleteSelectedModel").addEventListener("click", async () => {
   const selected = availableModels.find((model) => model.id === $("modelSelect").value);
   if (!selected || selected.current || !selected.deletable) return;
-  if (!confirm(`ลบ “${selected.label}” ถาวรหรือไม่? ไฟล์โมเดลและสำเนาที่เหมือนกันจะถูกลบ`)) return;
+  if (!confirm(`ลบ “${selected.label}” ถาวรหรือไม่? โฟลเดอร์งานฝึกพร้อมไฟล์ภายในและสำเนาโมเดลที่เหมือนกันจะถูกลบ`)) return;
   $("deleteSelectedModel").disabled = true;
   $("activateSelectedModel").disabled = true;
   $("modelSelect").disabled = true;
@@ -664,6 +718,6 @@ $("deleteSelectedModel").addEventListener("click", async () => {
 async function initialize() {
   await loadDataset();
   await loadModels();
-  await refreshJob();
+  await refreshJob({ restore: true });
 }
 initialize();

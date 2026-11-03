@@ -1,11 +1,10 @@
 import uuid
 import json
-import hashlib
-from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
 
 import cv2
+import numpy as np
 from flask import Flask, jsonify, request, send_from_directory
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
@@ -29,15 +28,13 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE * 2 + 128 * 1024
 model_service = ShelfModelService(PRODUCT_MODEL_PATH, GAP_MODEL_PATH)
 training_manager = TrainingManager(model_service.class_names, model_service)
 
-@lru_cache(maxsize=4)
-def model_hash(path, modified, size):
-    with open(path, 'rb') as file:
-        return hashlib.file_digest(file, 'sha256').hexdigest()
-
 
 def model_version(path):
-    stat = path.stat()
-    return model_hash(str(path), stat.st_mtime_ns, stat.st_size)
+    if Path(path) == PRODUCT_MODEL_PATH:
+        name = training_manager.active_model_name()
+        return name
+    return Path(path).name
+
 
 # สร้างพื้นที่จัดเก็บเมื่อ service เริ่มทำงาน เพื่อให้ PHP ใช้เป็น upload temp ได้
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -46,6 +43,13 @@ RESULT_DIR.mkdir(parents=True, exist_ok=True)
 
 def error_response(message: str, status_code: int):
     return jsonify({"success": False, "message": message}), status_code
+
+
+def json_object():
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise ValueError("คำขอต้องเป็น JSON object")
+    return body
 
 
 def is_local_browser_origin(origin: str) -> bool:
@@ -69,7 +73,11 @@ def is_local_browser_origin(origin: str) -> bool:
 @app.before_request
 def protect_training_endpoints():
     origin = request.headers.get("Origin", "")
-    if request.path.startswith("/training/") and origin and not is_local_browser_origin(origin):
+    if (
+        request.path.startswith("/training/")
+        and origin
+        and not is_local_browser_origin(origin)
+    ):
         return error_response("ไม่อนุญาตคำขอจากเว็บไซต์นี้", 403)
 
 
@@ -81,6 +89,21 @@ def parse_confidence(value) -> float:
     if not 0.01 <= parsed <= 1.0:
         raise ValueError("confidence ต้องอยู่ระหว่าง 0.01 ถึง 1.00")
     return parsed
+
+
+def request_alignment(image, plan, preview=False):
+    mode = request.form.get("alignment_mode", "off")
+    if mode == "aruco":
+        from aruco_alignment import aruco_planogram
+
+        return aruco_planogram(
+            image, plan, request.form.get("alignment_token"), preview=preview
+        )
+    if mode != "off":
+        raise ValueError("รองรับเฉพาะโหมด ArUco หรือไม่จัดแนว กรุณารีโหลดหน้าเว็บ")
+    if preview:
+        raise ValueError("เลือกโหมด ArUco ก่อนแสดงตัวอย่างจัดแนว")
+    return plan, {"applied": False}
 
 
 @app.after_request
@@ -97,9 +120,7 @@ def add_cors_headers(response):
 @app.get("/health")
 def health():
     missing_models = [
-        str(path)
-        for path in (PRODUCT_MODEL_PATH, GAP_MODEL_PATH)
-        if not path.is_file()
+        str(path) for path in (training_manager.active_model_path, GAP_MODEL_PATH) if not path.is_file()
     ]
     if missing_models:
         return error_response("ไม่พบไฟล์โมเดล: " + ", ".join(missing_models), 503)
@@ -107,7 +128,7 @@ def health():
         {
             "success": True,
             "message": "AI service is ready",
-            "product_model": str(PRODUCT_MODEL_PATH),
+            "product_model": str(training_manager.active_model_path),
             "gap_model": str(GAP_MODEL_PATH),
         }
     )
@@ -139,7 +160,9 @@ def training_images():
 @app.post("/training/images/pending")
 def add_pending_training_image():
     try:
-        saved = training_manager.save_image(request.files.get("image"), [], allow_unlabeled=True)
+        saved = training_manager.save_image(
+            request.files.get("image"), [], allow_unlabeled=True
+        )
         return jsonify({"success": True, "data": saved}), 201
     except ValueError as exc:
         return error_response(str(exc), 400)
@@ -173,7 +196,7 @@ def get_training_image(image_id):
 @app.put("/training/images/<image_id>")
 def update_training_image(image_id):
     try:
-        body = request.get_json(silent=True) or {}
+        body = json_object()
         saved = training_manager.update_annotations(image_id, body.get("annotations"))
         return jsonify({"success": True, "data": saved})
     except ValueError as exc:
@@ -187,7 +210,9 @@ def update_training_image(image_id):
 @app.delete("/training/images/<image_id>")
 def delete_training_image(image_id):
     try:
-        return jsonify({"success": True, "data": training_manager.delete_image(image_id)})
+        return jsonify(
+            {"success": True, "data": training_manager.delete_image(image_id)}
+        )
     except ValueError as exc:
         return error_response(str(exc), 400)
     except FileNotFoundError as exc:
@@ -220,18 +245,27 @@ def get_training_job(job_id):
 @app.post("/training/jobs")
 def start_training_job():
     try:
-        body = request.get_json(silent=True) or {}
+        body = json_object()
         state = training_manager.start(body.get("epochs", 60), body.get("target_class"))
         return jsonify({"success": True, "data": state}), 202
     except ValueError as exc:
         return error_response(str(exc), 400)
 
 
+@app.post("/training/jobs/<job_id>/cancel")
+def cancel_training_job(job_id):
+    try:
+        return jsonify({"success": True, "data": training_manager.cancel(job_id)}), 202
+    except ValueError as exc:
+        return error_response(str(exc), 400)
+    except FileNotFoundError as exc:
+        return error_response(str(exc), 404)
+
+
 @app.post("/training/jobs/<job_id>/activate")
 def activate_training_job(job_id):
     try:
         state = training_manager.activate(job_id)
-        model_hash.cache_clear()
         return jsonify({"success": True, "data": state})
     except ValueError as exc:
         return error_response(str(exc), 400)
@@ -244,9 +278,8 @@ def activate_training_job(job_id):
 @app.post("/training/models/activate")
 def activate_selected_model():
     try:
-        body = request.get_json(silent=True) or {}
+        body = json_object()
         result = training_manager.select_model(body.get("model_id"))
-        model_hash.cache_clear()
         return jsonify({"success": True, "data": result})
     except ValueError as exc:
         return error_response(str(exc), 400)
@@ -259,8 +292,13 @@ def activate_selected_model():
 @app.post("/training/models/delete")
 def delete_training_model():
     try:
-        body = request.get_json(silent=True) or {}
-        return jsonify({"success": True, "data": training_manager.delete_model(body.get("model_id"))})
+        body = json_object()
+        return jsonify(
+            {
+                "success": True,
+                "data": training_manager.delete_model(body.get("model_id")),
+            }
+        )
     except ValueError as exc:
         return error_response(str(exc), 400)
     except FileNotFoundError as exc:
@@ -276,19 +314,19 @@ def predict():
         return error_response("กรุณาเลือกไฟล์ภาพ", 400)
 
     try:
-        plan_id = request.form.get('planogram_id', '').strip()
-        raw_plan = request.form.get('planogram', 'null')
+        plan_id = request.form.get("planogram_id", "").strip()
+        raw_plan = request.form.get("planogram", "null")
         plan = json.loads(raw_plan)
-        if plan_id and (not isinstance(plan, dict) or plan.get('id') != plan_id):
-            return error_response('แผนถูกเปลี่ยนหรือไม่พบ กรุณาโหลดหน้าใหม่และเลือกแผนอีกครั้ง', 409)
+        if plan_id and (not isinstance(plan, dict) or plan.get("id") != plan_id):
+            return error_response(
+                "แผนถูกเปลี่ยนหรือไม่พบ กรุณาโหลดหน้าใหม่และเลือกแผนอีกครั้ง", 409
+            )
         if plan is not None and not plan_id:
-            return error_response('กรุณาระบุรหัส Planogram', 400)
+            return error_response("กรุณาระบุรหัส Planogram", 400)
         if plan is not None:
             plan = validate_inference_plan(plan, model_service.class_names())
         product_confidence = parse_confidence(
-            request.form.get(
-                "product_confidence", DEFAULT_PRODUCT_CONFIDENCE
-            )
+            request.form.get("product_confidence", DEFAULT_PRODUCT_CONFIDENCE)
         )
         gap_confidence = parse_confidence(
             request.form.get("gap_confidence", DEFAULT_GAP_CONFIDENCE)
@@ -318,9 +356,14 @@ def predict():
         if image is None:
             upload_path.unlink(missing_ok=True)
             return error_response("ไฟล์ที่อัปโหลดไม่ใช่ภาพที่อ่านได้", 400)
-        detection_result = model_service.detect_scene(
-            upload_path, result_path, product_confidence, gap_confidence, plan
-        )
+        mapped_plan, alignment = request_alignment(image, plan)
+
+        #เรียกโมเดลตรวจสินค้าและช่องว่าง
+        with training_manager._lock:
+            detection_result = model_service.detect_scene(
+                upload_path, result_path, product_confidence, gap_confidence, mapped_plan
+            )
+            product_model_name = model_version(PRODUCT_MODEL_PATH)
     except ValueError as exc:
         for path in cleanup_paths:
             path.unlink(missing_ok=True)
@@ -340,13 +383,50 @@ def predict():
             "product_confidence": product_confidence,
             "gap_confidence": gap_confidence,
             **detection_result,
+            "alignment": alignment,
+            "planogram_regions": mapped_plan["shelves"] if alignment["applied"] else [],
+            "aligned_image_path": None,
+            "aligned_image_url": None,
             "input_image_path": f"storage/uploads/{upload_path.name}",
             "result_image_path": f"storage/results/{result_filename}",
-            "product_model": model_version(PRODUCT_MODEL_PATH),
+            "product_model": product_model_name,
             "gap_model": model_version(GAP_MODEL_PATH),
             "result_image_url": f"{request.host_url.rstrip('/')}/results/{result_filename}",
         }
     )
+
+
+@app.post("/alignment/preview")
+def alignment_preview():
+    try:
+        plan = json.loads(request.form.get("planogram", "null"))
+        if not isinstance(plan, dict) or plan.get("id") != request.form.get(
+            "planogram_id"
+        ):
+            raise ValueError("เลือก Planogram ที่ต้องการจัดแนว")
+        image_file = request.files.get("image")
+        if (
+            image_file is None
+            or Path(image_file.filename or "").suffix.lower() not in ALLOWED_EXTENSIONS
+        ):
+            raise ValueError("เลือกภาพ JPG, PNG หรือ WEBP")
+        raw = image_file.read(MAX_FILE_SIZE + 1)
+        if not raw or len(raw) > MAX_FILE_SIZE:
+            raise ValueError("ไฟล์ภาพต้องมีขนาดไม่เกิน 10 MB")
+        image = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
+        if image is None:
+            raise ValueError("อ่านภาพอัปโหลดไม่ได้")
+        plan = validate_inference_plan(plan, model_service.class_names())
+        mapped_plan, alignment = request_alignment(image, plan, preview=True)
+        return jsonify(
+            success=True,
+            planogram_regions=mapped_plan["shelves"],
+            alignment=alignment,
+            width=image.shape[1],
+            height=image.shape[0],
+        )
+    except (ValueError, TypeError) as exc:
+        return error_response(str(exc), 400)
 
 
 @app.get("/results/<path:filename>")
@@ -354,7 +434,21 @@ def result_image(filename):
     return send_from_directory(RESULT_DIR, filename)
 
 
-@app.post('/planogram/validate')
+@app.post("/aruco/reference")
+def aruco_reference():
+    from aruco_alignment import inspect_reference
+
+    try:
+        data = request.get_json(silent=True)
+        result = inspect_reference(
+            data.get("image") if isinstance(data, dict) else None
+        )
+        return jsonify(success=True, **result)
+    except ValueError as exc:
+        return error_response(str(exc), 400)
+
+
+@app.post("/planogram/validate")
 def planogram():
     try:
         plan = validate_plan(request.get_json(silent=True), model_service.class_names())

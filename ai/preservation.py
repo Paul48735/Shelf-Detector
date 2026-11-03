@@ -1,4 +1,5 @@
 """Keep the source detector immutable while adding a target-class specialist."""
+
 import hashlib
 import re
 import shutil
@@ -43,7 +44,9 @@ def attach_preservation(candidate, source, target_classes, archive_dir):
     if not targets or not set(targets).issubset(set(model.names.values())):
         raise ValueError("คลาสที่จะเสริมไม่ถูกต้อง")
     model.ckpt[METADATA_KEY] = {
-        "version": 1, "source_hash": source_hash, "target_classes": targets,
+        "version": 1,
+        "source_hash": source_hash,
+        "target_classes": targets,
     }
     # YOLO loading prefers ema, so avoid retaining a stale EMA entry on save.
     model.ckpt["ema"] = None
@@ -59,12 +62,16 @@ def attach_preservation(candidate, source, target_classes, archive_dir):
 def overlaps(first, second):
     ax1, ay1, ax2, ay2 = first
     bx1, by1, bx2, by2 = second
-    intersection = max(0, min(ax2, bx2) - max(ax1, bx1)) * max(0, min(ay2, by2) - max(ay1, by1))
+    intersection = max(0, min(ax2, bx2) - max(ax1, bx1)) * max(
+        0, min(ay2, by2) - max(ay1, by1)
+    )
     first_area = max(0, ax2 - ax1) * max(0, ay2 - ay1)
     second_area = max(0, bx2 - bx1) * max(0, by2 - by1)
     union = first_area + second_area - intersection
     return (intersection / union >= 0.3 if union else False) or (
-        intersection / min(first_area, second_area) >= 0.6 if min(first_area, second_area) else False
+        intersection / min(first_area, second_area) >= 0.6
+        if min(first_area, second_area)
+        else False
     )
 
 
@@ -72,18 +79,24 @@ def merge_detections(original, tuned, target_classes):
     """Keep every non-target detection; a specialist may only update its targets."""
     targets = set(target_classes)
     protected = [item for item in original if item["class_name"] not in targets]
-    additions = [item for item in tuned if item["class_name"] in targets and not any(
-        overlaps(item["box"], old["box"]) for old in protected
-    )]
+    additions = [
+        item
+        for item in tuned
+        if item["class_name"] in targets
+        and not any(overlaps(item["box"], old["box"]) for old in protected)
+    ]
     additions.sort(key=lambda item: item["confidence"], reverse=True)
     accepted = []
     for item in additions:
         if not any(overlaps(item["box"], other["box"]) for other in accepted):
             accepted.append(item)
     # If the specialist misses a previously detected target, retain the source result.
-    retained = [item for item in original if item["class_name"] in targets and not any(
-        overlaps(item["box"], other["box"]) for other in accepted
-    )]
+    retained = [
+        item
+        for item in original
+        if item["class_name"] in targets
+        and not any(overlaps(item["box"], other["box"]) for other in accepted)
+    ]
     return protected + retained + accepted
 
 
@@ -104,15 +117,24 @@ class ProductDetector:
             raise ValueError("ข้อมูลการรักษาโมเดลเดิมไม่ถูกต้อง")
         source_hash = metadata.get("source_hash", "")
         targets = metadata.get("target_classes")
-        if not isinstance(source_hash, str) or not re.fullmatch(r"[a-f0-9]{64}", source_hash):
+        if not isinstance(source_hash, str) or not re.fullmatch(
+            r"[a-f0-9]{64}", source_hash
+        ):
             raise ValueError("รหัสโมเดลต้นทางไม่ถูกต้อง")
-        if not isinstance(targets, list) or not targets or any(
-            not isinstance(name, str) or name not in self.names.values() for name in targets
+        if (
+            not isinstance(targets, list)
+            or not targets
+            or any(
+                not isinstance(name, str) or name not in self.names.values()
+                for name in targets
+            )
         ):
             raise ValueError("คลาสที่จะเสริมไม่ถูกต้อง")
         source = archive_dir / f"bestProduct-{source_hash}.pt"
         if not source.is_file() or file_hash(source) != source_hash:
-            raise ValueError("ไม่พบโมเดลต้นทางที่ถูกต้องสำหรับรักษาคลาสเดิม")
+            raise ValueError(
+                f"ไม่พบโมเดลต้นทางที่ถูกต้องสำหรับรักษาคลาสเดิม: {source.name} ใน ai/models/archive/"
+            )
         self.base = ProductDetector(source, archive_dir, (*ancestors, resolved))
         if self.base.names != self.names:
             raise ValueError("คลาสของโมเดลต้นทางไม่ตรงกัน")
@@ -121,17 +143,25 @@ class ProductDetector:
     def predict_detections(self, image, confidence):
         kwargs = dict(source=image, conf=confidence, verbose=False)
         if self.base is not None:
-            kwargs["classes"] = [index for index, name in self.names.items() if name in self.targets]
+            kwargs["classes"] = [
+                index for index, name in self.names.items() if name in self.targets
+            ]
         result = self.model.predict(**kwargs)[0]
         tuned = []
         if result.boxes is not None:
             for box in result.boxes:
                 class_id = int(box.cls[0])
-                tuned.append({
-                    "class_name": str(result.names[class_id]),
-                    "confidence": float(box.conf[0]),
-                    "box": tuple(float(value) for value in box.xyxy[0].cpu().tolist()),
-                })
+                tuned.append(
+                    {
+                        "class_name": str(result.names[class_id]),
+                        "confidence": float(box.conf[0]),
+                        "box": tuple(
+                            float(value) for value in box.xyxy[0].cpu().tolist()
+                        ),
+                    }
+                )
         if self.base is None:
             return tuned
-        return merge_detections(self.base.predict_detections(image, confidence), tuned, self.targets)
+        return merge_detections(
+            self.base.predict_detections(image, confidence), tuned, self.targets
+        )

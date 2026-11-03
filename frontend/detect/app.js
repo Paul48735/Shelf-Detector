@@ -19,6 +19,174 @@ const resultPanel = document.querySelector("#resultPanel");
 const planogramSelect = document.querySelector("#planogramSelect");
 let selectedFile = null;
 let previewUrl = null;
+let isSubmitting = false;
+let selectedPlan = null;
+let sourceRatio = null;
+let busy = false;
+let planLoading = false;
+let alignmentReady = false;
+let alignmentToken = null;
+let previewGeneration = 0;
+const byId = (id) => document.getElementById(id);
+const alignmentPanel = byId("alignmentPanel");
+function alignmentMode() {
+  return selectedPlan ? byId("alignmentMode").value : "off";
+}
+function alignmentError(message = "") {
+  byId("alignmentError").textContent = message;
+  byId("alignmentError").hidden = !message;
+}
+function invalidateAlignment() {
+  previewGeneration++;
+  alignmentReady = false;
+  alignmentToken = null;
+  byId("alignedPreviewSection").hidden = true;
+  alignmentError();
+}
+function updateAlignmentHint() {
+  byId("alignmentHint").textContent =
+    alignmentMode() === "aruco"
+      ? "ArUco: ใช้ DICT_4X4_50 ID 0 บนซ้าย · 1 บนขวา · 2 ล่างขวา · 3 ล่างซ้าย ต้องเห็นครบทั้งภาพอ้างอิงและภาพอัปโหลด ตรวจกรอบก่อน Detect"
+      : "ไม่จัดแนว: ถ่ายภาพให้มุมมองและกรอบชั้นตรงกับภาพอ้างอิงของ Planogram";
+  byId("previewAlignment").disabled =
+    alignmentMode() !== "aruco" || !selectedPlan || busy || planLoading;
+  byId("detectAligned").disabled = !alignmentReady || busy;
+}
+function refreshAlignmentPanel() {
+  const hasImage = !!selectedFile && !!sourceRatio;
+  alignmentPanel.hidden = !hasImage;
+  if (hasImage) {
+    previewImage.hidden = false;
+    previewImage.src = previewUrl;
+    previewImage.alt = "ภาพสำหรับตรวจสอบ";
+    imageCaption.textContent = "ภาพที่รอตรวจสอบ";
+  }
+  invalidateAlignment();
+  updateAlignmentHint();
+  if (hasImage && selectedPlan && alignmentMode() === "aruco" && !planLoading && !busy)
+    previewAlignment();
+}
+function setBusy(value) {
+  busy = value;
+  form.inert = value;
+  alignmentPanel.inert = value;
+  updateSubmitState();
+  updateAlignmentHint();
+}
+function overlayPlan(regions, width, imageHeight) {
+  const svg = byId("alignedRegions");
+  svg.replaceChildren();
+  const height = (1000 * imageHeight) / width;
+  svg.setAttribute("viewBox", `0 0 1000 ${height}`);
+  for (const region of regions) {
+    const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+    polygon.setAttribute(
+      "points",
+      region.points.map(([x, y]) => `${x * 1000},${y * height}`).join(" "),
+    );
+    polygon.setAttribute("fill", "#20c99722");
+    polygon.setAttribute("stroke", "#20c997");
+    polygon.setAttribute("stroke-width", "3");
+    svg.append(polygon);
+  }
+}
+async function loadSelectedPlan() {
+  const id = planogramSelect.value;
+  selectedPlan = null;
+  planLoading = !!id;
+  resultPanel.hidden = true;
+  refreshAlignmentPanel();
+  updateSubmitState();
+  setError();
+  if (!id) return;
+  try {
+    const response = await fetch(`${API_BASE}/planogram.php?id=${encodeURIComponent(id)}`);
+    const payload = await readJsonResponse(response);
+    if (!response.ok || !payload.success || !payload.data)
+      throw new Error(payload.message || "โหลดแผนไม่ได้");
+    if (planogramSelect.value !== id) return;
+    selectedPlan = payload.data;
+  } catch (error) {
+    if (planogramSelect.value === id) setError(error.message);
+  } finally {
+    if (planogramSelect.value === id) {
+      planLoading = false;
+      refreshAlignmentPanel();
+      updateSubmitState();
+    }
+  }
+}
+function overlayMarkers(markers, width, imageHeight) {
+  const svg = byId("alignedRegions");
+  const height = (1000 * imageHeight) / width;
+  for (const marker of markers || []) {
+    const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+    polygon.setAttribute(
+      "points",
+      marker.points.map(([x, y]) => `${x * 1000},${y * height}`).join(" "),
+    );
+    polygon.setAttribute("fill", "none");
+    polygon.setAttribute("stroke", "#ffc107");
+    polygon.setAttribute("stroke-width", "3");
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("x", marker.points[0][0] * 1000);
+    label.setAttribute("y", Math.max(18, marker.points[0][1] * height - 5));
+    label.setAttribute("fill", "#ffc107");
+    label.setAttribute("font-size", "20");
+    label.textContent = `ID ${marker.id}`;
+    svg.append(polygon, label);
+  }
+}
+planogramSelect.addEventListener("change", loadSelectedPlan);
+byId("detectAligned").onclick = () => form.requestSubmit();
+byId("alignmentMode").onchange = () => {
+  refreshAlignmentPanel();
+  updateSubmitState();
+  resultPanel.hidden = true;
+};
+async function previewAlignment() {
+  if (busy || !selectedFile || !selectedPlan || alignmentMode() !== "aruco") return;
+  const generation = ++previewGeneration;
+  alignmentReady = false;
+  alignmentToken = null;
+  byId("alignedPreviewSection").hidden = true;
+  setBusy(true);
+  alignmentError();
+  try {
+    const body = new FormData();
+    body.append("image", selectedFile, selectedFile.name);
+    body.append("alignment_mode", "aruco");
+    const response = await fetch(`${API_BASE}/detect.php?preview=1`, {
+      method: "POST",
+      headers: { "X-Planogram-Id": selectedPlan.id },
+      body,
+    });
+    const payload = await readJsonResponse(response);
+    if (!response.ok || !payload.success) throw new Error(payload.message || "จัดแนวไม่สำเร็จ");
+    if (generation !== previewGeneration) return;
+    if (
+      payload.alignment?.method !== "aruco" ||
+      !payload.alignment.preview_token ||
+      !Array.isArray(payload.planogram_regions)
+    )
+      throw new Error("AI service ยังไม่รองรับ ArUco กรุณาเริ่ม AI service ใหม่");
+    alignmentToken = payload.alignment.preview_token;
+    byId("alignedPreview").src = previewUrl;
+    overlayPlan(payload.planogram_regions, payload.width, payload.height);
+    overlayMarkers(payload.alignment.markers, payload.width, payload.height);
+    byId("alignedPreviewSection").hidden = false;
+    alignmentReady = true;
+    byId("alignedPreviewSection").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (error) {
+    if (generation === previewGeneration) {
+      alignmentReady = false;
+      alignmentError(error.message);
+    }
+  } finally {
+    setBusy(false);
+  }
+}
+byId("previewAlignment").onclick = previewAlignment;
 
 async function readJsonResponse(response) {
   const raw = await response.text();
@@ -38,7 +206,11 @@ function setError(message = "") {
 }
 
 function updateSubmitState() {
-  submitButton.disabled = !selectedFile;
+  submitButton.disabled =
+    isSubmitting ||
+    busy ||
+    (alignmentMode() === "aruco" &&
+      (!selectedPlan || planLoading || !sourceRatio || !alignmentReady));
 }
 
 function setPreview(file) {
@@ -49,15 +221,29 @@ function setPreview(file) {
   emptyState.hidden = true;
   imageStage.classList.remove("empty");
   imageCaption.textContent = "ภาพที่รอตรวจสอบ";
+  sourceRatio = null;
+  refreshAlignmentPanel();
+  const url = previewUrl;
+  const source = new Image();
+  source.src = url;
+  source
+    .decode()
+    .then(() => {
+      if (previewUrl !== url) return;
+      sourceRatio = source.naturalWidth / source.naturalHeight;
+      refreshAlignmentPanel();
+      updateSubmitState();
+    })
+    .catch(() => {
+      if (previewUrl === url) setError("อ่านไฟล์ภาพไม่สำเร็จ");
+    });
 }
 
 function acceptFile(file) {
   setError();
   if (!file) return;
-  if (!ALLOWED_TYPES.includes(file.type))
-    return setError("รองรับเฉพาะไฟล์ JPG, PNG และ WEBP");
-  if (file.size > MAX_FILE_SIZE)
-    return setError("ไฟล์ภาพต้องมีขนาดไม่เกิน 10 MB");
+  if (!ALLOWED_TYPES.includes(file.type)) return setError("รองรับเฉพาะไฟล์ JPG, PNG และ WEBP");
+  if (file.size > MAX_FILE_SIZE) return setError("ไฟล์ภาพต้องมีขนาดไม่เกิน 10 MB");
   selectedFile = file;
   fileName.textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
   fileInfo.hidden = false;
@@ -77,6 +263,8 @@ function clearFile() {
   resultPanel.hidden = true;
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = null;
+  sourceRatio = null;
+  refreshAlignmentPanel();
   updateSubmitState();
 }
 
@@ -85,14 +273,12 @@ function renderProducts(counts) {
   const entries = Object.entries(counts);
   list.innerHTML = "";
   if (!entries.length) {
-    list.innerHTML =
-      '<div class="list-group-item text-body-secondary">ไม่พบสินค้าในภาพ</div>';
+    list.innerHTML = '<div class="list-group-item text-body-secondary">ไม่พบสินค้าในภาพ</div>';
     return;
   }
   entries.forEach(([name, count]) => {
     const row = document.createElement("div");
-    row.className =
-      "list-group-item d-flex justify-content-between align-items-start gap-3";
+    row.className = "list-group-item d-flex justify-content-between align-items-start gap-3";
     const label = document.createElement("span");
     label.textContent = name;
     const quantity = document.createElement("strong");
@@ -114,8 +300,7 @@ function renderGaps(gaps) {
   }
   visibleGaps.forEach((gap) => {
     const row = document.createElement("div");
-    row.className =
-      "list-group-item d-flex justify-content-between align-items-start gap-3";
+    row.className = "list-group-item d-flex justify-content-between align-items-start gap-3";
     const product = gap.product_class;
     const labels = {
       planogram: `ตามแผน: ${gap.shelf_name}`,
@@ -139,25 +324,29 @@ function renderGaps(gaps) {
 
 function showResult(payload) {
   document.querySelector("#totalProducts").textContent = payload.total_products;
-  document.querySelector("#totalClasses").textContent = Object.keys(
-    payload.product_counts,
-  ).length;
+  document.querySelector("#totalClasses").textContent = Object.keys(payload.product_counts).length;
   document.querySelector("#totalGaps").textContent = payload.total_gaps;
-  document.querySelector("#identifiedGaps").textContent =
-    payload.identified_gaps;
+  document.querySelector("#identifiedGaps").textContent = payload.identified_gaps;
   renderProducts(payload.product_counts);
   payload.products
     .filter((p) => p.placement_status === "wrong-shelf")
     .forEach((product) => {
       const row = document.createElement("div");
       row.className = "list-group-item text-danger";
-      row.textContent = `ผิด shelf: ${product.class_name} → ควรเป็น ${product.expected_class} (${product.shelf_name})`;
+      row.textContent = `ผิด shelf: ${product.class_name}  ควรเป็น ${product.expected_class} (${product.shelf_name})`;
       document.querySelector("#productList").append(row);
     });
   renderGaps(payload.gaps);
+  previewImage.hidden = false;
+  updateAlignmentHint();
   previewImage.src = `${payload.result_image_url}?v=${Date.now()}`;
   previewImage.alt = "ผลตรวจจับสินค้าและช่องว่าง";
-  imageCaption.textContent = `พบสินค้า ${payload.total_products} ชิ้น · ผิด shelf ${payload.wrong_shelf_count || 0} ชิ้น · gap ที่ระบุได้ ${payload.identified_gaps} ตำแหน่ง`;
+  imageCaption.textContent = `${payload.alignment?.applied ? "ArUco: " : ""}พบสินค้า ${payload.total_products} ชิ้น`;
+  if (payload.alignment?.mode === "planogram-to-image" && payload.planogram_regions) {
+    byId("alignedPreview").src = previewUrl;
+    overlayPlan(payload.planogram_regions, payload.image_width, payload.image_height);
+    byId("alignedPreviewSection").hidden = false;
+  }
   resultPanel.hidden = false;
   resultPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -185,9 +374,9 @@ productConfidence.addEventListener("input", () => {
   ).toFixed(2);
 });
 gapConfidence.addEventListener("input", () => {
-  document.querySelector("#gapConfidenceValue").textContent = Number(
-    gapConfidence.value,
-  ).toFixed(2);
+  document.querySelector("#gapConfidenceValue").textContent = Number(gapConfidence.value).toFixed(
+    2,
+  );
 });
 imageInput.addEventListener("change", () => acceptFile(imageInput.files[0]));
 document.querySelector("#removeFile").addEventListener("click", clearFile);
@@ -204,15 +393,22 @@ document.querySelector("#removeFile").addEventListener("click", clearFile);
     dropZone.classList.remove("dragging");
   }),
 );
-dropZone.addEventListener("drop", (event) =>
-  acceptFile(event.dataTransfer.files[0]),
-);
+dropZone.addEventListener("drop", (event) => acceptFile(event.dataTransfer.files[0]));
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (isSubmitting) return;
   setError();
   if (!selectedFile) return setError("กรุณาเลือกไฟล์ภาพ");
-  submitButton.disabled = true;
+  if (planogramSelect.value && !selectedPlan)
+    return setError("โหลด Planogram ไม่สำเร็จ กรุณาเลือกแผนใหม่");
+  const mode = alignmentMode();
+  if (mode === "aruco" && (!alignmentReady || !alignmentToken))
+    return setError(
+      "จัดแนว ArUco ให้ผ่านและตรวจกรอบก่อน Detect หรือเลือกไม่จัดแนวเมื่อภาพตรงกับแผน",
+    );
+  isSubmitting = true;
+  setBusy(true);
   submitButton.querySelector(".button-label").hidden = true;
   submitButton.querySelector(".button-loading").hidden = false;
   const planogramId = planogramSelect.value;
@@ -225,6 +421,8 @@ form.addEventListener("submit", async (event) => {
     body.append("product_confidence", productConfidence.value);
     body.append("gap_confidence", gapConfidence.value);
     body.append("planogram_id", planogramId);
+    body.append("alignment_mode", mode);
+    if (alignmentToken) body.append("alignment_token", alignmentToken);
     const response = await fetch(`${API_BASE}/detect.php`, {
       method: "POST",
       headers: {
@@ -235,16 +433,16 @@ form.addEventListener("submit", async (event) => {
       body,
     });
     const payload = await readJsonResponse(response);
-    if (!response.ok || !payload.success)
-      throw new Error(payload.message || "ประมวลผลไม่สำเร็จ");
+    if (!response.ok || !payload.success) throw new Error(payload.message || "ประมวลผลไม่สำเร็จ");
     showResult(payload);
   } catch (error) {
     setError(error.message);
     imageCaption.textContent = "เกิดข้อผิดพลาดในการประมวลผล";
   } finally {
+    isSubmitting = false;
     submitButton.querySelector(".button-label").hidden = false;
     submitButton.querySelector(".button-loading").hidden = true;
-    updateSubmitState();
+    setBusy(false);
   }
 });
 
@@ -258,10 +456,9 @@ fetch(`${API_BASE}/planogram.php?list=1`)
     if (plans.length) {
       plans.forEach((item) => {
         const savedAt = item.created_at ? item.created_at.replace("T", " ").slice(0, 19) : "";
-        planogramSelect.append(new Option(`${item.name} · ${savedAt} · ${item.id.slice(0, 8)}`, item.id));
+        planogramSelect.append(new Option(`${item.name} · ${savedAt}`, item.id));
       });
-      document.querySelector("#planogramStatus").textContent =
-        "เลือกแผนของชั้นวางเดียวกันและถ่ายภาพให้มุมมองใกล้เคียงภาพอ้างอิง";
+      document.querySelector("#planogramStatus").textContent = "";
     } else
       document.querySelector("#planogramStatus").textContent =
         "ยังไม่มีแผน กรุณาบันทึกในหน้ากำหนด Planogram";

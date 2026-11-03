@@ -2,5 +2,5 @@
 
 declare(strict_types=1);
 
-header('Location: detect/');
-exit;
+header("Location: detect/");
+exit();
